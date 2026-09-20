@@ -1,7 +1,10 @@
-# Dokploy deployment — build new-api from this repository's source.
+# Dokploy deployment — runs the image built by .github/workflows/aoso-image.yml.
+#
+# The Dokploy host never compiles anything: GitHub's runners build and push to
+# GHCR, and that workflow pings Dokploy's webhook once the image exists.
 #
 # In Dokploy: Create Service -> Compose -> Provider = Git (this fork),
-# Compose Path = ./docker-compose.dokploy.yml.
+# Branch = aoso, Compose Path = ./docker-compose.dokploy.yml.
 # Set the variables below in the service's "Environment" tab, then add a Domain
 # with Service Name = new-api, Container Port = 3000, HTTPS + Let's Encrypt.
 #
@@ -10,12 +13,15 @@
 #   POSTGRES_PASSWORD=<strong-password>
 #   REDIS_PASSWORD=<strong-password>
 #   SESSION_SECRET=<long-random-string>
+# Optional:
+#   NEW_API_IMAGE=ghcr.io/isboyjc/new-api:aoso-20260921-abc1234  # pin an exact build
 
 services:
   new-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${NEW_API_IMAGE:-ghcr.io/isboyjc/new-api:aoso}
+    # The :aoso tag moves with every push, so a redeploy must re-resolve it
+    # instead of reusing whatever digest the host already has cached.
+    pull_policy: always
     restart: unless-stopped
     command: --log-dir /app/logs
     environment:

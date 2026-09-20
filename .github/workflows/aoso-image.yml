@@ -1,0 +1,93 @@
+# Builds the aoso branch into a container image on GitHub's runners and pushes
+# it to this repository's GHCR namespace, so the Dokploy host only ever pulls.
+#
+# Deliberately separate from the upstream docker-build workflows: those target
+# the upstream Docker Hub repository and would conflict on every upstream sync.
+#
+# Optional repository secret:
+#   DOKPLOY_WEBHOOK_URL - the service's Webhook URL from Dokploy. When set, a
+#                         redeploy is triggered only after the image exists.
+#
+# Action versions are pinned to the same commits the upstream workflows use.
+
+name: Build aoso image
+
+on:
+  push:
+    branches:
+      - aoso
+  workflow_dispatch:
+
+concurrency:
+  group: aoso-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Resolve image name and version
+        id: meta
+        run: |
+          IMAGE="ghcr.io/$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          VERSION="aoso-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # The Dockerfile stamps this into both the Go binary and the frontend.
+          # Upstream fills it from the release tag, which never runs on a fork.
+          echo "${VERSION}" > VERSION
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          # Add linux/arm64 here if the Dokploy host is ARM. It roughly doubles
+          # build time, so amd64-only is the default.
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:aoso
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Dokploy redeploy
+        if: github.event_name == 'push'
+        env:
+          WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DOKPLOY_WEBHOOK_URL is not set; skipping redeploy."
+            exit 0
+          fi
+          curl -fsSL -X POST "$WEBHOOK_URL"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo '```'
+            echo "${{ steps.meta.outputs.image }}:aoso"
+            echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
