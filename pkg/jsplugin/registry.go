@@ -106,6 +106,8 @@ type Meta struct {
 	UsageSchema          map[string]UsageFieldSchema `json:"usageSchema,omitempty"`
 	UsageExamples        []UsageExample              `json:"usageExamples,omitempty"`
 	UsageProfiles        []UsageProfile              `json:"usageProfiles,omitempty"`
+	RequestParameters    []RequestParameter          `json:"requestParameters,omitempty"`
+	RequestProfiles      []RequestProfile            `json:"requestProfiles,omitempty"`
 	Auth                 AuthMeta                    `json:"auth"`
 }
 
@@ -871,6 +873,12 @@ func cloneMeta(meta Meta) Meta {
 		meta.Protocols[index].Models = append([]string(nil), meta.Protocols[index].Models...)
 		meta.Protocols[index].Supports = append([]string(nil), meta.Protocols[index].Supports...)
 	}
+	meta.RequestParameters = cloneRequestParameters(meta.RequestParameters)
+	meta.RequestProfiles = append([]RequestProfile(nil), meta.RequestProfiles...)
+	for index := range meta.RequestProfiles {
+		meta.RequestProfiles[index].Models = append([]string(nil), meta.RequestProfiles[index].Models...)
+		meta.RequestProfiles[index].Parameters = cloneRequestParameters(meta.RequestProfiles[index].Parameters)
+	}
 	if meta.Description != nil {
 		meta.Description = maps.Clone(meta.Description)
 	}
@@ -1003,7 +1011,7 @@ func decodeMeta(value any) (Meta, error) {
 	}
 	for field := range object {
 		switch field {
-		case "requiredCapabilities", "submitResponseTypes", "sortPriority", "website", "apiVersion", "key", "name", "icon", "description", "version", "author", "baseUrl", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "upstreams", "routes", "protocols", "usageSchema", "usageExamples", "usageProfiles", "auth", "endpoints", "submitPaths", "actions":
+		case "requiredCapabilities", "submitResponseTypes", "sortPriority", "website", "apiVersion", "key", "name", "icon", "description", "version", "author", "baseUrl", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "upstreams", "routes", "protocols", "usageSchema", "usageExamples", "usageProfiles", "requestParameters", "requestProfiles", "auth", "endpoints", "submitPaths", "actions":
 		default:
 			return Meta{}, &UnknownMetaFieldError{Field: field}
 		}
@@ -1132,6 +1140,18 @@ func decodeMeta(value any) (Meta, error) {
 			return Meta{}, err
 		}
 	}
+	if requestParameters, exists := object["requestParameters"]; exists {
+		meta.RequestParameters, err = decodeRequestParameters(requestParameters)
+		if err != nil {
+			return Meta{}, err
+		}
+	}
+	if requestProfiles, exists := object["requestProfiles"]; exists {
+		meta.RequestProfiles, err = decodeRequestProfiles(requestProfiles)
+		if err != nil {
+			return Meta{}, err
+		}
+	}
 	for _, removedField := range []string{"submitPaths", "actions"} {
 		if _, exists := object[removedField]; exists {
 			return Meta{}, fmt.Errorf("plugin meta %s is no longer supported; declare routes instead", removedField)
@@ -1235,6 +1255,9 @@ func normalizeV1Meta(meta *Meta) error {
 	}
 	if strings.TrimSpace(meta.Name) == "" {
 		return fmt.Errorf("plugin meta name is required")
+	}
+	if err := validateRequestParameterMeta(meta); err != nil {
+		return err
 	}
 	meta.Icon = strings.TrimSpace(meta.Icon)
 	if strings.HasPrefix(meta.Icon, "data:") || strings.Contains(meta.Icon, "://") {

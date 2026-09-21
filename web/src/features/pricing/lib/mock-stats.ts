@@ -16,7 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { PricingModel } from '../types'
+import { resolveLocalizedText } from '@/lib/localized-text'
+
+import { ENDPOINT_TYPES } from '../constants'
+import type { PricingModel, RequestParameter } from '../types'
 import {
   hashStringToSeed,
   randomInRange,
@@ -508,7 +511,10 @@ export type SupportedParameter = {
   defaultValue?: string | number | boolean
   range?: string
   enumValues?: string[]
+  /** i18n key for a description the host owns. */
   descriptionKey: string
+  /** Text a provider supplied for the current locale; shown as-is. */
+  descriptionText?: string
   required?: boolean
 }
 
@@ -734,6 +740,9 @@ const IMAGE_PARAMS: SupportedParameter[] = [
   },
 ]
 
+// The fields the video endpoint itself defines. A provider may accept more,
+// which is why the table is introduced as the common ones rather than the
+// complete set.
 const VIDEO_PARAMS: SupportedParameter[] = [
   {
     name: 'prompt',
@@ -742,36 +751,43 @@ const VIDEO_PARAMS: SupportedParameter[] = [
     descriptionKey: 'Text description of the desired video',
   },
   {
-    name: 'duration',
+    name: 'seconds',
     type: 'integer',
-    range: '1 ~ 60',
-    descriptionKey: 'Video length in seconds',
+    descriptionKey: 'Requested video length in seconds',
   },
   {
-    name: 'aspect_ratio',
-    type: 'enum',
-    enumValues: ['16:9', '9:16', '1:1'],
-    defaultValue: '16:9',
-    descriptionKey: 'Output aspect ratio',
+    name: 'size',
+    type: 'string',
+    descriptionKey: 'Output dimensions, such as 1280x720',
   },
   {
-    name: 'fps',
-    type: 'integer',
-    range: '8 ~ 60',
-    defaultValue: 24,
-    descriptionKey: 'Frames per second',
+    name: 'input_reference',
+    type: 'string',
+    descriptionKey: 'Reference image the video starts from',
   },
 ]
 
 type ApiCategory = 'reasoning' | 'embedding' | 'image' | 'video' | 'chat'
 
+const CATEGORY_BY_ENDPOINT_TYPE: Record<string, ApiCategory> = {
+  [ENDPOINT_TYPES.OPENAI_VIDEO]: 'video',
+  [ENDPOINT_TYPES.IMAGE_GENERATION]: 'image',
+  [ENDPOINT_TYPES.EMBEDDINGS]: 'embedding',
+  [ENDPOINT_TYPES.JINA_RERANK]: 'embedding',
+}
+
 /**
- * Refine the broad PROFILE_BY_NAME bucket into an API-shape category. The
- * `image` bucket from `PROFILE_BY_NAME` lumps still-image and video models
- * together (because their performance profiles overlap); for the API tab we
- * need to distinguish them so the request-parameter table is accurate.
+ * Decide which API shape a model answers on. The endpoints it is served on say
+ * this outright, so they decide; a model name only has to be guessed from when
+ * the server reports nothing. The `image` bucket from `PROFILE_BY_NAME` lumps
+ * still-image and video models together, because their performance profiles
+ * overlap, so that guess is refined by name as well.
  */
 function apiCategoryOf(model: PricingModel): ApiCategory {
+  for (const endpointType of model.supported_endpoint_types ?? []) {
+    const category = CATEGORY_BY_ENDPOINT_TYPE[endpointType]
+    if (category) return category
+  }
   const profile = PROFILE_BY_NAME(model.model_name)
   if (profile === 'embedding' || profile === 'reasoning') return profile
   if (profile === 'image') {
@@ -787,15 +803,43 @@ function apiCategoryOf(model: PricingModel): ApiCategory {
  * shaped per-modality so reasoning, embedding, image, video and chat models
  * each show their relevant parameter set.
  */
+/**
+ * Build the parameter rows for a model. A provider that declares its own
+ * request fields describes them exactly, including the ones no generic table
+ * could know; everything else falls back to the shape of its modality.
+ */
 export function buildSupportedParameters(
-  model: PricingModel
+  model: PricingModel,
+  language?: string
 ): SupportedParameter[] {
+  const declared = model.request_parameters
+  if (declared && declared.length > 0) {
+    return declared.map((parameter) => toSupportedParameter(parameter, language))
+  }
   const cat = apiCategoryOf(model)
   if (cat === 'reasoning') return REASONING_PARAMS
   if (cat === 'embedding') return EMBEDDING_PARAMS
   if (cat === 'image') return IMAGE_PARAMS
   if (cat === 'video') return VIDEO_PARAMS
   return COMMON_CHAT_PARAMS
+}
+
+// A declared description is provider data, already written per locale, so it is
+// resolved here and passed through instead of going back through t().
+function toSupportedParameter(
+  parameter: RequestParameter,
+  language?: string
+): SupportedParameter {
+  return {
+    name: parameter.name,
+    type: parameter.type,
+    required: parameter.required,
+    defaultValue: parameter.default,
+    range: parameter.range,
+    enumValues: parameter.enum,
+    descriptionKey: '',
+    descriptionText: resolveLocalizedText(parameter.description, language ?? 'en'),
+  }
 }
 
 export type RateLimit = {

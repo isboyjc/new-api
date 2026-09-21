@@ -6,6 +6,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	// Registering the built-in task plugins is what gives a Task Plugin channel
+	// its protocol claims; production gets them through the main package.
+	_ "github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,4 +295,107 @@ func TestCacheUpdateChannelSyncsAdvancedCustomConfig(t *testing.T) {
 	CacheUpdateChannel(channel)
 
 	assert.Nil(t, channel2advancedCustomConfig[401])
+}
+
+// A Task Plugin channel serves whatever host protocols its plugin claims, so
+// the channel type alone cannot say where a model is callable. Without this a
+// video model is advertised on the chat completions endpoint.
+func TestPricingTaskPluginEndpointTypesFollowDeclaredProtocols(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+
+	insertPricingEndpointChannel(t, 301, constant.ChannelTypeTaskPlugin, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 301, "w3.0-video")
+	insertPricingEndpointAbility(t, 301, "wan2.6-t2i")
+
+	byModel := pricingEndpointTypesByModel(t)
+
+	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo, constant.EndpointTypeOpenAIResponse},
+		byModel["w3.0-video"], "a video model is not a chat completions model")
+	assert.Contains(t, byModel["wan2.6-t2i"], constant.EndpointTypeImageGeneration)
+	assert.NotContains(t, byModel["w3.0-video"], constant.EndpointTypeOpenAI)
+}
+
+// The channel usually renames the plugin's model, so the ability carries the
+// alias while the plugin knows only the declared name. Resolving that is what
+// makes the endpoints correct for a real deployment rather than only for a
+// channel that happens to expose the vendor's own model names.
+func TestPricingTaskPluginEndpointTypesResolveChannelAlias(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+
+	modelMapping := `{"w3.0-video-spicy":"w3.0-video"}`
+	channel := &Channel{
+		Id: 303, Type: constant.ChannelTypeTaskPlugin, Key: "key-303",
+		Status: common.ChannelStatusEnabled, Name: "channel-303",
+		Models:       "w3.0-video-spicy",
+		ModelMapping: &modelMapping,
+	}
+	require.NoError(t, DB.Create(channel).Error)
+	insertPricingEndpointAbility(t, 303, "w3.0-video-spicy")
+
+	byModel := pricingEndpointTypesByModel(t)
+
+	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo, constant.EndpointTypeOpenAIResponse},
+		byModel["w3.0-video-spicy"])
+}
+
+// A model no plugin serves keeps the channel-type answer rather than losing its
+// endpoints entirely.
+func TestPricingTaskPluginUnknownModelFallsBackToChannelType(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+
+	insertPricingEndpointChannel(t, 302, constant.ChannelTypeTaskPlugin, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 302, "not-served-by-any-plugin")
+
+	byModel := pricingEndpointTypesByModel(t)
+
+	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAI}, byModel["not-served-by-any-plugin"])
+}
+
+// The catalogue can only describe a plugin model's request accurately if the
+// plugin's declaration actually reaches it. The alias is what makes this real:
+// a channel renames the model, so a lookup by the catalogue name finds nothing
+// unless it is resolved first.
+func TestPricingCarriesTaskPluginRequestParameters(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+
+	modelMapping := `{"w3.0-video-spicy":"w3.0-video","w3.0-video-pro-spicy":"w3.0-video-pro"}`
+	require.NoError(t, DB.Create(&Channel{
+		Id: 304, Type: constant.ChannelTypeTaskPlugin, Key: "key-304",
+		Status: common.ChannelStatusEnabled, Name: "channel-304",
+		Models:       "w3.0-video-spicy,w3.0-video-pro-spicy",
+		ModelMapping: &modelMapping,
+	}).Error)
+	insertPricingEndpointAbility(t, 304, "w3.0-video-spicy")
+	insertPricingEndpointAbility(t, 304, "w3.0-video-pro-spicy")
+	insertPricingEndpointChannel(t, 305, constant.ChannelTypeOpenAI, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 305, "gpt-4o")
+
+	InitChannelCache()
+	byModel := make(map[string][]jsplugin.RequestParameter)
+	for _, pricing := range GetPricing() {
+		byModel[pricing.ModelName] = pricing.RequestParameters
+	}
+
+	base := byModel["w3.0-video-spicy"]
+	require.NotEmpty(t, base, "a plugin model carries the fields its plugin declares")
+	names := make([]string, 0, len(base))
+	for _, parameter := range base {
+		names = append(names, parameter.Name)
+	}
+	assert.Contains(t, names, "reference_videos", "a vendor field no generic table could name")
+
+	// The profile is what keeps a tier list honest: the pro model rejects the
+	// resolutions the base model accepts.
+	resolutionOf := func(parameters []jsplugin.RequestParameter) []string {
+		for _, parameter := range parameters {
+			if parameter.Name == "resolution" {
+				return parameter.Enum
+			}
+		}
+		return nil
+	}
+	assert.Equal(t, []string{"480p", "720p", "1080p"}, resolutionOf(base))
+	assert.Equal(t, []string{"1080p", "2k", "4k"}, resolutionOf(byModel["w3.0-video-pro-spicy"]))
+
+	assert.Empty(t, byModel["gpt-4o"], "a model no plugin serves declares nothing")
 }

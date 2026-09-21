@@ -1268,3 +1268,43 @@ func TestSubmitResponseTypesContract(t *testing.T) {
 		})
 	}
 }
+
+// Request parameters describe what a model accepts so a catalogue can stop
+// guessing from the modality. They are display metadata, so the manifest is
+// checked at load rather than trusted at render time.
+func TestRegistryDecodesRequestParameters(t *testing.T) {
+	const declared = `requestParameters: [
+		{name: "prompt", type: "string", required: true, description: {en: "Prompt", zh: "提示词"}},
+		{name: "resolution", type: "enum", enum: ["480p", "1080p"], default: "1080p", description: {en: "Tier"}},
+	],
+	requestProfiles: [
+		{models: ["model"], parameters: [{name: "prompt", type: "string", description: {en: "Prompt"}}]},
+	],`
+	plugin, err := CompilePlugin(routingTestPluginSource("params-ok", 0, `["model"]`, declared, ""), Options{})
+	require.NoError(t, err)
+	require.Len(t, plugin.Meta.RequestParameters, 2)
+	assert.True(t, plugin.Meta.RequestParameters[0].Required)
+	assert.Equal(t, []string{"480p", "1080p"}, plugin.Meta.RequestParameters[1].Enum)
+	assert.Equal(t, "1080p", plugin.Meta.RequestParameters[1].Default)
+
+	// A profiled model answers with its own list, an unprofiled one with the
+	// plugin defaults, matching how usage profiles resolve.
+	assert.Len(t, plugin.Meta.RequestParametersForModels("model"), 1)
+	assert.Len(t, plugin.Meta.RequestParametersForModels("other"), 2)
+}
+
+func TestRegistryRejectsUnusableRequestParameters(t *testing.T) {
+	for _, tc := range []struct{ name, declared, message string }{
+		{"unknown type", `requestParameters: [{name: "a", type: "colour"}],`, "parameter type must be one of"},
+		{"enum without values", `requestParameters: [{name: "a", type: "enum"}],`, "must declare its values"},
+		{"duplicate name", `requestParameters: [{name: "a", type: "string"}, {name: "a", type: "string"}],`, "duplicate parameter"},
+		{"unknown field", `requestParameters: [{name: "a", type: "string", unit: "s"}],`, "unknown field"},
+		{"undeclared profile model", `requestProfiles: [{models: ["ghost"], parameters: [{name: "a", type: "string"}]}],`, "undeclared model"},
+		{"model in two profiles", `requestProfiles: [{models: ["model"], parameters: [{name: "a", type: "string"}]}, {models: ["model"], parameters: [{name: "b", type: "string"}]}],`, "appears in requestProfiles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewRegistry().Register(routingTestPluginSource("params-bad", 0, `["model"]`, tc.declared, ""), Options{})
+			require.ErrorContains(t, err, tc.message)
+		})
+	}
+}

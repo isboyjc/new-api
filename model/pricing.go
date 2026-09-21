@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ type Pricing struct {
 	BillingExpr            string                               `json:"billing_expr,omitempty"`
 	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
 	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
+	RequestParameters      []jsplugin.RequestParameter          `json:"request_parameters,omitempty"`
 	PricingVersion         string                               `json:"pricing_version,omitempty"`
 }
 
@@ -120,7 +122,76 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 	return make([]constant.EndpointType, 0)
 }
 
+// taskPluginModel resolves a catalogue model name to the plugin that serves it
+// and the name that plugin declares. A channel usually exposes the model under
+// its own name, so the catalogue carries the alias while the plugin knows only
+// the declared one.
+func taskPluginModel(model string) (*jsplugin.LoadedPlugin, string, bool) {
+	generation := jsplugin.DefaultRegistry.Generation()
+	if generation == nil {
+		return nil, "", false
+	}
+	if target, resolved := ResolveTaskModelAlias(generation, model); resolved && target.Declared != "" {
+		model = target.Declared
+	}
+	plugins := generation.PluginsByModel(model)
+	if len(plugins) == 0 {
+		return nil, "", false
+	}
+	return plugins[0], model, true
+}
+
+// taskPluginRequestParameters reports the request fields a plugin's model
+// accepts. Only the plugin knows them, and a catalogue that lists a generic
+// shape for the modality either hides capabilities or advertises fields the
+// vendor rejects.
+func taskPluginRequestParameters(model string) []jsplugin.RequestParameter {
+	plugin, declared, ok := taskPluginModel(model)
+	if !ok {
+		return nil
+	}
+	return plugin.Meta.RequestParametersForModels(declared)
+}
+
+// taskPluginEndpointTypes reports the endpoints a task plugin's model is
+// actually callable on. A Task Plugin channel serves whatever host protocols
+// its plugin claims, so the channel type alone says nothing: without this a
+// video model is advertised on the chat completions endpoint.
+func taskPluginEndpointTypes(model string) []constant.EndpointType {
+	protocolEndpoints := map[string]constant.EndpointType{
+		"openai_video":     constant.EndpointTypeOpenAIVideo,
+		"openai_image":     constant.EndpointTypeImageGeneration,
+		"openai_responses": constant.EndpointTypeOpenAIResponse,
+	}
+	plugin, declared, ok := taskPluginModel(model)
+	if !ok {
+		return nil
+	}
+	// Declaration order is the plugin's to choose; it reaches the pricing page
+	// as the order the endpoints are listed in.
+	endpointTypes := make([]constant.EndpointType, 0, len(protocolEndpoints))
+	for _, claim := range plugin.Meta.Protocols {
+		endpointType, mapped := protocolEndpoints[claim.Name]
+		if !mapped {
+			continue
+		}
+		// A claim may narrow itself to a subset of the plugin's models.
+		if len(claim.Models) > 0 && !slices.Contains(claim.Models, declared) {
+			continue
+		}
+		if !slices.Contains(endpointTypes, endpointType) {
+			endpointTypes = append(endpointTypes, endpointType)
+		}
+	}
+	return endpointTypes
+}
+
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
+	if ability.ChannelType == constant.ChannelTypeTaskPlugin {
+		if endpointTypes := taskPluginEndpointTypes(ability.Model); len(endpointTypes) > 0 {
+			return endpointTypes
+		}
+	}
 	if ability.ChannelType != constant.ChannelTypeAdvancedCustom {
 		return common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model)
 	}
@@ -331,6 +402,7 @@ func updatePricing() {
 			ModelName:              model,
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
+			RequestParameters:      taskPluginRequestParameters(model),
 		}
 
 		// 补充模型元数据（描述、标签、供应商、状态）

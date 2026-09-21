@@ -9,7 +9,7 @@
 //
 // The task envelope carries no usage statistics, so the seconds upstream bills
 // are measured instead: the host probes the reference clips before the request
-// is sent, and the produced clip once it exists. See billableSeconds.
+// is sent, and the produced clip once it exists. See extractUsage.
 
 const VIDEO_RESOLUTIONS = ["480p", "720p", "1080p"];
 const PRO_VIDEO_RESOLUTIONS = ["1080p", "2k", "4k"];
@@ -63,11 +63,18 @@ function videoUsageSchema(resolutions) {
   const resolutionLabels = {};
   for (const resolution of resolutions) resolutionLabels[resolution] = { en: resolution, zh: resolution };
   return {
-    // Billable seconds: input video duration plus output video duration.
+    // Seconds of video produced.
     seconds: {
       type: "number",
       unit: "second",
       description: { en: "Video generation unit price", zh: "视频生成单价" },
+    },
+    // Seconds inside the reference videos, which upstream bills as well. Kept
+    // separate from the produced seconds so pricing lists what it charges for.
+    input_seconds: {
+      type: "number",
+      unit: "second",
+      description: { en: "Reference video input unit price", zh: "参考视频输入单价" },
     },
     // Requested output video resolution.
     resolution: {
@@ -82,8 +89,9 @@ function videoUsageExamples(resolutions) {
   const cheapest = resolutions[0];
   const dearest = resolutions[resolutions.length - 1];
   return [
-    { label: cheapest + " · 5s", facts: { seconds: 5, resolution: cheapest } },
-    { label: dearest + " · 10s", facts: { seconds: 10, resolution: dearest } },
+    { label: cheapest + " · 5s", facts: { seconds: 5, input_seconds: 0, resolution: cheapest } },
+    { label: cheapest + " · 5s + ref 3s", facts: { seconds: 5, input_seconds: 3, resolution: cheapest } },
+    { label: dearest + " · 10s", facts: { seconds: 10, input_seconds: 0, resolution: dearest } },
   ];
 }
 
@@ -100,6 +108,153 @@ function videoUsageProfiles() {
     profile.models.push(model);
   }
   return profiles;
+}
+
+// Request fields, for the catalogue's parameter table. This is display
+// metadata: convert() remains the only thing that validates a request, and
+// nothing here reaches billing. Source: the vendor's endpoint reference.
+function videoRequestParameters(resolutions) {
+  return [
+    {
+      name: "prompt",
+      type: "string",
+      description: {
+        en: "Text description of the video; required unless a media input is given",
+        zh: "视频的文本描述，未提供媒体输入时必填",
+      },
+    },
+    {
+      name: "first_frame",
+      type: "string",
+      description: {
+        en: "Opening frame as a URL, data URI or Base64; keyframe mode",
+        zh: "首帧图片，URL、data URI 或 Base64；关键帧模式",
+      },
+    },
+    {
+      name: "last_frame",
+      type: "string",
+      description: {
+        en: "Closing frame, same formats as first_frame; keyframe mode",
+        zh: "尾帧图片，格式同 first_frame；关键帧模式",
+      },
+    },
+    {
+      name: "reference_images",
+      type: "array",
+      range: "≤ 10",
+      description: {
+        en: "Reference images as URL, data URI or Base64; reference mode",
+        zh: "参考图片，URL、data URI 或 Base64；参考模式",
+      },
+    },
+    {
+      name: "reference_videos",
+      type: "array",
+      range: "≤ 5",
+      description: {
+        en: "Reference video URLs, 15s combined, mp4 or mov; their seconds are billed",
+        zh: "参考视频 URL，总时长 15 秒内，mp4 或 mov；其时长计入计费",
+      },
+    },
+    {
+      name: "reference_audios",
+      type: "array",
+      range: "≤ 5",
+      description: {
+        en: "Reference audio URLs, 15s combined, wav or mp3",
+        zh: "参考音频 URL，总时长 15 秒内，wav 或 mp3",
+      },
+    },
+    {
+      name: "file",
+      type: "string",
+      description: {
+        en: "Reference document URL: doc, xls, ppt, pdf, txt, md and similar",
+        zh: "参考文档 URL，支持 doc、xls、ppt、pdf、txt、md 等",
+      },
+    },
+    {
+      name: "link",
+      type: "string",
+      description: {
+        en: "Public web page URL to draw reference material from",
+        zh: "公开网页 URL，作为参考素材",
+      },
+    },
+    {
+      name: "resolution",
+      type: "enum",
+      enum: resolutions,
+      default: DEFAULT_RESOLUTION,
+      description: { en: "Output resolution tier", zh: "输出分辨率档位" },
+    },
+    {
+      name: "ratio",
+      type: "enum",
+      enum: RATIOS,
+      default: DEFAULT_RATIO,
+      description: {
+        en: "Aspect ratio; adaptive derives it from the prompt and input media",
+        zh: "画面比例；adaptive 根据提示词与输入媒体自动推导",
+      },
+    },
+    {
+      name: "duration",
+      type: "integer",
+      range: MIN_DURATION + " ~ " + MAX_DURATION + " | -1",
+      default: DEFAULT_DURATION,
+      description: {
+        en: "Seconds of video to produce, or -1 to let the model choose",
+        zh: "生成视频的秒数，-1 表示由模型决定时长",
+      },
+    },
+    {
+      name: "audio",
+      type: "boolean",
+      default: true,
+      description: {
+        en: "Whether the output carries an audio track; the price is the same either way",
+        zh: "输出是否包含音轨；开关不影响价格",
+      },
+    },
+    {
+      name: "seed",
+      type: "integer",
+      range: "0 ~ " + MAX_SEED,
+      description: {
+        en: "Seed for reproducible generation; omit for a random one",
+        zh: "随机种子，用于复现生成结果；省略则随机",
+      },
+    },
+    {
+      name: "prompt_extend",
+      type: "boolean",
+      default: true,
+      description: {
+        en: "Whether the prompt is rewritten before generation",
+        zh: "生成前是否对提示词进行改写扩展",
+      },
+    },
+    {
+      name: "seconds",
+      type: "integer",
+      description: { en: "Alias of duration, for OpenAI video clients", zh: "duration 的别名，兼容 OpenAI 视频客户端" },
+    },
+    {
+      name: "size",
+      type: "string",
+      description: {
+        en: "Alias for resolution and ratio together, such as 1280x720",
+        zh: "resolution 与 ratio 的合并别名，例如 1280x720",
+      },
+    },
+    {
+      name: "input_reference",
+      type: "string",
+      description: { en: "Alias of first_frame, for OpenAI video clients", zh: "first_frame 的别名，兼容 OpenAI 视频客户端" },
+    },
+  ];
 }
 
 export const meta = {
@@ -123,9 +278,15 @@ export const meta = {
   usageSchema: videoUsageSchema(VIDEO_RESOLUTIONS),
   usageExamples: videoUsageExamples(VIDEO_RESOLUTIONS),
   usageProfiles: videoUsageProfiles(),
+  requestParameters: videoRequestParameters(VIDEO_RESOLUTIONS),
+  requestProfiles: [
+    { models: ["w3.0-video-pro", "w3.0-video-prime-pro"], parameters: videoRequestParameters(PRO_VIDEO_RESOLUTIONS) },
+  ],
+  // Declaration order is display order on the pricing page, so the endpoint a
+  // caller reaches for first comes first.
   protocols: [
-    { name: "openai_responses", supports: ["stream", "sync", "background"] },
     "openai_video",
+    { name: "openai_responses", supports: ["stream", "sync", "background"] },
   ],
 };
 
@@ -308,12 +469,11 @@ function inputSeconds(body, media, strict) {
   return Math.min(total, MAX_REFERENCE_VIDEO_SECONDS);
 }
 
-// The output side is the requested duration. Smart duration leaves it to
+// The produced side is the requested duration. Smart duration leaves it to
 // upstream, so a submission can only reserve the ceiling; the produced clip is
 // measured at completion and settles the difference.
-function billableSeconds(body, media, strict) {
-  const output = body.duration === SMART_DURATION ? MAX_BILLED_SECONDS : body.duration;
-  return Math.min(MAX_BILLED_SECONDS, output + inputSeconds(body, media, strict));
+function outputSeconds(body) {
+  return body.duration === SMART_DURATION ? MAX_BILLED_SECONDS : body.duration;
 }
 
 function resolutionRatio(model, resolution) {
@@ -417,17 +577,23 @@ export function parseSubmitResponse(ctx, resp) {
   return { taskId: trimmed(info.id), taskData: body, state: state };
 }
 
+// Produced seconds and reference seconds are reported separately: upstream
+// charges the same rate for both, but pricing has to name every quantity it
+// bills for, and a caller comparing the invoice to the request can see where
+// each second came from.
 export function extractUsage(ctx) {
   const converted = convert(ctx);
-  const seconds = billableSeconds(converted.body, ctx.media);
+  const output = outputSeconds(converted.body);
+  const input = inputSeconds(converted.body, ctx.media);
   const resolution = converted.body.resolution;
   if (ctx.usagePurpose === "billing_ratios") {
-    const ratios = { seconds: seconds };
+    const ratios = { seconds: output };
+    if (input > 0) ratios.input_seconds = input;
     const rate = resolutionRatio(converted.model, resolution);
     if (rate !== null) ratios["resolution-" + resolution] = rate;
     return ratios;
   }
-  return { seconds: seconds, resolution: resolution };
+  return { seconds: output, input_seconds: input, resolution: resolution };
 }
 
 export function buildQueryRequest(ctx) {
@@ -477,9 +643,9 @@ export function extractUsageOnComplete(task, _taskResult, _body) {
   if (state.smart_duration !== true) return null;
   const output = probedSeconds(task && task.media, PROBE_OUTPUT_KEY);
   if (output === null) return null;
-  const input = Number(state.input_seconds);
-  const inputTotal = Number.isFinite(input) && input >= 0 ? Math.min(input, MAX_REFERENCE_VIDEO_SECONDS) : MAX_REFERENCE_VIDEO_SECONDS;
-  return { seconds: Math.min(MAX_BILLED_SECONDS, inputTotal + output) };
+  // Only the produced length was unknown; the reference seconds reserved at
+  // submission stay as they were.
+  return { seconds: Math.min(MAX_BILLED_SECONDS, output) };
 }
 
 // The host measures what this names: the reference clips while the request is

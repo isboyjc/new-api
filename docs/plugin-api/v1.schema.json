@@ -22,7 +22,7 @@
     "submitResponseTypes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["json", "sse"]}},
     "requiredCapabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["json-clone@1", "submit-sse-delta@1",
         "media-probe@1"]}},
-    "routes": {"type": "array", "items": {"$ref": "#/$defs/route"}}, "usageSchema": {"type": "object", "additionalProperties": {"$ref": "#/$defs/usageField"}}, "usageExamples": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["label", "facts"], "properties": {"label": {"type": "string"}, "facts": {"type": "object"}}}}, "usageProfiles": {"type": "array", "items": {"$ref": "#/$defs/usageProfile"}}, "auth": {}
+    "routes": {"type": "array", "items": {"$ref": "#/$defs/route"}}, "usageSchema": {"type": "object", "additionalProperties": {"$ref": "#/$defs/usageField"}}, "usageExamples": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["label", "facts"], "properties": {"label": {"type": "string"}, "facts": {"type": "object"}}}}, "usageProfiles": {"type": "array", "items": {"$ref": "#/$defs/usageProfile"}}, "requestParameters": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/requestParameter"}}, "requestProfiles": {"type": "array", "items": {"$ref": "#/$defs/requestProfile"}}, "auth": {}
   },
   "allOf": [{"if": {"required": ["requiredCapabilities"], "properties": {"requiredCapabilities": {"contains": {"const": "submit-sse-delta@1"}}}}, "then": {"required": ["submitResponseTypes"], "properties": {"submitResponseTypes": {"contains": {"const": "sse"}}}}}],
   "$defs": {
@@ -42,6 +42,31 @@
         "state": true,
         "done": {"type": "boolean"}
       }
+    },
+    "requestParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z_][A-Za-z0-9_.\\[\\]-]*$"},
+        "type": {"enum": ["string", "integer", "number", "boolean", "enum", "array", "object"]},
+        "required": {"type": "boolean"},
+        "default": {"type": "string", "maxLength": 64},
+        "range": {"type": "string", "maxLength": 64},
+        "enum": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string"}},
+        "description": {"$ref": "#/$defs/localizedText"}
+      },
+      "description": "One request field a model accepts, for display only. The plugin still validates every request itself and nothing here reaches billing."
+    },
+    "requestProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["models", "parameters"],
+      "properties": {
+        "models": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "parameters": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/requestParameter"}}
+      },
+      "description": "Complete request parameters for declared models, replacing the plugin defaults. The host validates model membership and unique profile ownership."
     },
     "usageProfile": {
       "type": "object",

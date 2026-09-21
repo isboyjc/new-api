@@ -256,31 +256,29 @@ func TestMrAosoW3Video(t *testing.T) {
 		assert.Equal(t, "4k", request["body"].(map[string]any)["resolution"])
 	})
 
-	t.Run("billable seconds reserve the ceiling when the length is not fixed", func(t *testing.T) {
+	t.Run("produced and reference seconds are billed as separate quantities", func(t *testing.T) {
 		cases := []struct {
-			name    string
-			body    map[string]any
-			seconds float64
+			name           string
+			body           map[string]any
+			seconds, input float64
 		}{
-			{"explicit duration", map[string]any{"prompt": "a cat", "duration": 8}, 8},
-			{"default duration", map[string]any{"prompt": "a cat"}, 5},
-			{"smart duration", map[string]any{"prompt": "a cat", "duration": -1}, 30},
-			// Input video seconds bill too, bounded by the upstream limit on
-			// their combined length, not by the task ceiling.
+			{"explicit duration", map[string]any{"prompt": "a cat", "duration": 8}, 8, 0},
+			{"default duration", map[string]any{"prompt": "a cat"}, 5, 0},
+			{"smart duration reserves the ceiling", map[string]any{"prompt": "a cat", "duration": -1}, 30, 0},
 			// extractUsage keeps the bound as defense in depth; buildSubmitRequest
 			// has already refused an unmeasured clip by the time it runs.
-			{"unmeasured input falls back to the bound rather than zero", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 2}, 17},
-			{"the bound never exceeds the task ceiling", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 20}, 30},
+			{"unmeasured input falls back to the bound rather than zero", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 2}, 2, 15},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				facts := usage(t, "facts", "w3.0-video", "w3.0-video", tc.body)
-				assert.Equal(t, map[string]any{"seconds": tc.seconds, "resolution": "1080p"}, facts)
+				assert.Equal(t, map[string]any{"seconds": tc.seconds, "input_seconds": tc.input, "resolution": "1080p"}, facts)
 			})
 		}
 
 		ratios := usage(t, "billing_ratios", "w3.0-video", "w3.0-video", map[string]any{"prompt": "a cat", "duration": 6, "resolution": "720p"})
 		assert.Equal(t, float64(6), ratios["seconds"])
+		assert.NotContains(t, ratios, "input_seconds", "a request with no reference video carries no input ratio")
 		assert.InDelta(t, 2.0, ratios["resolution-720p"], 1e-9)
 
 		ratios = usage(t, "billing_ratios", "w3.0-video-prime-pro", "w3.0-video-prime-pro", map[string]any{"prompt": "a cat", "resolution": "4k"})
@@ -315,7 +313,7 @@ func TestMrAosoW3Video(t *testing.T) {
 		sparseUsage["media"] = map[string]any{"ref-0": map[string]any{"seconds": 4}}
 		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", sparseUsage)
 		require.NoError(t, callErr)
-		assert.Equal(t, float64(6), roundTrip(t, value)["seconds"])
+		assert.Equal(t, float64(4), roundTrip(t, value)["input_seconds"])
 
 		// An invalid request produces no probe; buildSubmitRequest reports it.
 		value, callErr = plugin.Engine.Call(t.Context(), "listProbeMedia",
@@ -333,7 +331,9 @@ func TestMrAosoW3Video(t *testing.T) {
 		}
 		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", measured)
 		require.NoError(t, callErr)
-		assert.Equal(t, 5.52, roundTrip(t, value)["seconds"], "2s output plus the measured 3.52s of input")
+		facts := roundTrip(t, value)
+		assert.Equal(t, float64(2), facts["seconds"])
+		assert.InDelta(t, 3.52, facts["input_seconds"], 1e-9, "the two measured clips")
 
 		// A clip whose length could not be read is refused before any quota is
 		// reserved: billing it at the upstream limit would stand at several
@@ -352,14 +352,16 @@ func TestMrAosoW3Video(t *testing.T) {
 			submitCtx("w3.0-video", "w3.0-video", map[string]any{"prompt": "a cat", "duration": 2}))
 		require.NoError(t, callErr)
 
-		// Measurements never push the reservation past the task ceiling.
-		long := map[string]any{"prompt": "a cat", "duration": 20, "reference_videos": []any{"https://cdn.example/a.mp4"}}
+		// Each quantity stays inside its own upstream limit.
+		long := map[string]any{"prompt": "a cat", "duration": 30, "reference_videos": []any{"https://cdn.example/a.mp4"}}
 		ceiling := submitCtx("w3.0-video", "w3.0-video", long)
 		ceiling["usagePurpose"] = "facts"
 		ceiling["media"] = map[string]any{"ref-0": map[string]any{"seconds": 15}}
 		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", ceiling)
 		require.NoError(t, callErr)
-		assert.Equal(t, float64(30), roundTrip(t, value)["seconds"])
+		facts = roundTrip(t, value)
+		assert.Equal(t, float64(30), facts["seconds"])
+		assert.Equal(t, float64(15), facts["input_seconds"])
 	})
 
 	t.Run("smart duration settles from the produced clip", func(t *testing.T) {
@@ -396,7 +398,9 @@ func TestMrAosoW3Video(t *testing.T) {
 		value, callErr = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", completion,
 			map[string]any{"status": "SUCCESS"}, terminal)
 		require.NoError(t, callErr)
-		assert.Equal(t, 9.04, roundTrip(t, value)["seconds"], "3s measured input plus the 6.04s produced")
+		settled := roundTrip(t, value)
+		assert.Equal(t, 6.04, settled["seconds"], "the produced clip settles the produced side only")
+		assert.NotContains(t, settled, "input_seconds", "reference seconds were already fixed at submission")
 
 		// An unmeasurable result keeps the reservation instead of guessing.
 		unmeasured := map[string]any{"taskId": "u", "state": state}

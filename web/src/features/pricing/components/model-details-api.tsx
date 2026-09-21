@@ -423,6 +423,98 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+// A video endpoint creates a task and returns its id; the caller polls the same
+// resource and downloads the result separately, so the sample has to show the
+// whole loop rather than one call.
+function buildVideoSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const prompt = 'A paper boat drifting down a rain-soaked street at night.'
+
+  if (lang === 'curl') {
+    const body = JSON.stringify(
+      { model: ctx.modelName, prompt, seconds: 5 },
+      null,
+      2
+    )
+    return [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
+      '',
+      `curl ${url}/<VIDEO_ID> \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}"`,
+      '',
+      `curl ${url}/<VIDEO_ID>/content \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -o video.mp4`,
+    ].join('\n')
+  }
+  if (lang === 'python') {
+    return [
+      'import time',
+      '',
+      'from openai import OpenAI',
+      '',
+      `client = OpenAI(base_url="${ctx.baseUrl}/v1", api_key="<YOUR_API_KEY>")`,
+      '',
+      'video = client.videos.create(',
+      `    model="${ctx.modelName}",`,
+      `    prompt="${prompt}",`,
+      '    seconds=5,',
+      ')',
+      '',
+      'while video.status not in ("completed", "failed"):',
+      '    time.sleep(5)',
+      '    video = client.videos.retrieve(video.id)',
+      '',
+      'content = client.videos.download_content(video.id)',
+      'content.write_to_file("video.mp4")',
+    ].join('\n')
+  }
+  if (lang === 'typescript') {
+    return [
+      `import OpenAI from 'openai'`,
+      '',
+      `const client = new OpenAI({`,
+      `  baseURL: '${ctx.baseUrl}/v1',`,
+      `  apiKey: process.env.${ctx.apiKeyEnv},`,
+      `})`,
+      '',
+      `let video = await client.videos.create({`,
+      `  model: '${ctx.modelName}',`,
+      `  prompt: '${prompt}',`,
+      `  seconds: 5,`,
+      `})`,
+      '',
+      `while (video.status !== 'completed' && video.status !== 'failed') {`,
+      `  await new Promise((resolve) => setTimeout(resolve, 5000))`,
+      `  video = await client.videos.retrieve(video.id)`,
+      `}`,
+      '',
+      `const content = await client.videos.downloadContent(video.id)`,
+    ].join('\n')
+  }
+  return [
+    `const created = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: {`,
+    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `    'Content-Type': 'application/json',`,
+    `  },`,
+    `  body: JSON.stringify({`,
+    `    model: '${ctx.modelName}',`,
+    `    prompt: '${prompt}',`,
+    `    seconds: 5,`,
+    `  }),`,
+    `})`,
+    '',
+    `const { id } = await created.json()`,
+    `// Poll ${ctx.endpointPath}/\${id} until status is completed,`,
+    `// then download ${ctx.endpointPath}/\${id}/content`,
+  ].join('\n')
+}
+
 function buildSample(
   lang: Lang,
   endpointType: string,
@@ -433,6 +525,7 @@ function buildSample(
   if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
     return buildEmbeddingSample(lang, ctx)
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'openai-video') return buildVideoSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 
@@ -553,10 +646,11 @@ function CodeSamplesSection(props: {
 // ---------------------------------------------------------------------------
 
 function SupportedParametersSection(props: { model: PricingModel }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const language = i18n.resolvedLanguage || i18n.language
   const params = useMemo(
-    () => buildSupportedParameters(props.model),
-    [props.model]
+    () => buildSupportedParameters(props.model, language),
+    [props.model, language]
   )
 
   if (params.length === 0) return null
@@ -616,7 +710,7 @@ function SupportedParametersSection(props: { model: PricingModel }) {
             header: t('Description'),
             className: 'h-9',
             cellClassName: tableStyles.topMutedCell,
-            cell: (p) => t(p.descriptionKey),
+            cell: (p) => p.descriptionText ?? t(p.descriptionKey),
           },
         ]}
       />

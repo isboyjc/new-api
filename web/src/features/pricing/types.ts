@@ -45,6 +45,17 @@ export type BillingUsageExample = {
   facts: Record<string, string | number>
 }
 
+/** A request field a plugin declares for its models; display metadata only. */
+export type RequestParameter = {
+  name: string
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'array' | 'object'
+  required?: boolean
+  default?: string
+  range?: string
+  enum?: string[]
+  description?: string | Record<string, string>
+}
+
 export type BillingPluginVariant = {
   plugin_key: string
   plugin_name: string
@@ -57,6 +68,7 @@ export type BillingPluginVariant = {
 
 export type PricingModel = {
   billing_plugin_variants?: BillingPluginVariant[]
+  request_parameters?: RequestParameter[]
   id: number
   model_name: string
   description?: string
