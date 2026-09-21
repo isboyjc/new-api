@@ -39,6 +39,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
+import { cn } from '@/lib/utils'
 
 import {
   buildRateLimits,
@@ -719,7 +720,35 @@ function SupportedParametersSection(props: { model: PricingModel }) {
 }
 
 function ParamRangeCell(props: { param: SupportedParameter }) {
+  const { t } = useTranslation()
   const { defaultValue, range, enumValues } = props.param
+  // Which values a field accepts is the point of the row, so they are listed
+  // even when one of them is the default; the default is marked among them
+  // rather than shown instead of them.
+  if (enumValues && enumValues.length > 0) {
+    return (
+      <div className='flex flex-wrap gap-0.5'>
+        {enumValues.map((value) => {
+          const isDefault =
+            defaultValue !== undefined && String(defaultValue) === value
+          return (
+            <code
+              key={value}
+              title={isDefault ? t('Default') : undefined}
+              className={cn(
+                'rounded px-1.5 py-0.5 font-mono text-sm',
+                isDefault
+                  ? 'bg-muted text-foreground font-medium'
+                  : 'bg-muted/60 text-muted-foreground'
+              )}
+            >
+              {isDefault ? `= ${value}` : value}
+            </code>
+          )
+        })}
+      </div>
+    )
+  }
   if (defaultValue !== undefined) {
     return (
       <div className='flex flex-wrap items-center gap-1'>
@@ -736,20 +765,6 @@ function ParamRangeCell(props: { param: SupportedParameter }) {
   if (range) {
     return (
       <span className='text-muted-foreground font-mono text-sm'>{range}</span>
-    )
-  }
-  if (enumValues && enumValues.length > 0) {
-    return (
-      <div className='flex flex-wrap gap-0.5'>
-        {enumValues.map((v) => (
-          <code
-            key={v}
-            className='bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-mono text-sm'
-          >
-            {v}
-          </code>
-        ))}
-      </div>
     )
   }
   return <span className='text-muted-foreground/60 text-sm'>—</span>

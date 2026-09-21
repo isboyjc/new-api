@@ -254,6 +254,11 @@ function videoRequestParameters(resolutions) {
       type: "string",
       description: { en: "Alias of first_frame, for OpenAI video clients", zh: "first_frame 的别名，兼容 OpenAI 视频客户端" },
     },
+    {
+      name: "image",
+      type: "string",
+      description: { en: "Alias of first_frame, as the vendor quickstart writes it", zh: "first_frame 的别名，厂商快速上手示例使用该写法" },
+    },
   ];
 }
 
