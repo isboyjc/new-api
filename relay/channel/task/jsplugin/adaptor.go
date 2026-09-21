@@ -87,6 +87,7 @@ type TaskAdaptor struct {
 	routeRequest   *pluginruntime.RouteRequestContext
 	requestHeaders map[string]string
 	files          []map[string]any
+	probedMedia    map[string]any
 }
 
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
@@ -129,6 +130,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "plugin_usage_invalid", http.StatusBadRequest)
 		}
 	}
+	// Measure the media a plugin bills for before the descriptor is built, so
+	// buildSubmitRequest, extractUsage and parseSubmitResponse all see the same
+	// measurements and the reservation is computed from them.
+	a.probedMedia = a.probeDeclaredMedia(c.Request.Context(), a.submitContext(c, info))
 	if _, err := a.buildSubmit(c, info); err != nil {
 		return service.TaskErrorWrapperLocal(err, "plugin_request_invalid", http.StatusBadRequest)
 	}
@@ -738,6 +743,18 @@ func (a *TaskAdaptor) ParseBatchResult(tasks []*model.Task, resp *http.Response,
 					break
 				}
 			}
+			// Measure this task's produced media on the same terms as a
+			// per-task poll, so a batch plugin settles the same way.
+			if model.TaskStatus(info.Status) == model.TaskStatusSuccess {
+				if media := a.probeDeclaredMedia(context.Background(), completionProbeContext(itemCtx, usageBody)); len(media) > 0 {
+					measured := make(map[string]any, len(itemCtx)+1)
+					for key, value := range itemCtx {
+						measured[key] = value
+					}
+					measured["media"] = media
+					itemCtx = measured
+				}
+			}
 			facts, hookErr := a.plugin.Engine.Call(context.Background(), "extractUsageOnComplete", itemCtx, jsonValue(&info), usageBody)
 			if hookErr == nil {
 				upstreamModel, _ := itemCtx["upstreamModel"].(string)
@@ -805,6 +822,13 @@ func (a *TaskAdaptor) ParseTaskResult(task *model.Task, resp *http.Response, bod
 	// The raw polling response only exists at this boundary. Capture upstream
 	// units here so the host settlement path can consume them from TaskInfo.
 	if a.hasHook(context.Background(), "extractUsageOnComplete") {
+		// A produced clip can only be measured once it exists, so the same
+		// declaration hook runs again here against the terminal response.
+		if model.TaskStatus(result.Status) == model.TaskStatusSuccess {
+			if media := a.probeDeclaredMedia(context.Background(), completionProbeContext(ctx, input)); len(media) > 0 {
+				ctx["media"] = media
+			}
+		}
 		facts, hookErr := a.plugin.Engine.Call(context.Background(), "extractUsageOnComplete", ctx, jsonValue(result), input)
 		if hookErr == nil {
 			upstreamModel, _ := ctx["upstreamModel"].(string)
@@ -1363,6 +1387,9 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 			})
 		}
 		ctx["originTasks"] = originTasks
+	}
+	if len(a.probedMedia) > 0 {
+		ctx["media"] = a.probedMedia
 	}
 	ctx["publicTaskId"] = info.PublicTaskID
 	ctx["model"] = info.OriginModelName

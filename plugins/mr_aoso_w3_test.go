@@ -265,7 +265,12 @@ func TestMrAosoW3Video(t *testing.T) {
 			{"explicit duration", map[string]any{"prompt": "a cat", "duration": 8}, 8},
 			{"default duration", map[string]any{"prompt": "a cat"}, 5},
 			{"smart duration", map[string]any{"prompt": "a cat", "duration": -1}, 30},
-			{"reference video input is billed too", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 5}, 30},
+			// Input video seconds bill too, bounded by the upstream limit on
+			// their combined length, not by the task ceiling.
+			// extractUsage keeps the bound as defense in depth; buildSubmitRequest
+			// has already refused an unmeasured clip by the time it runs.
+			{"unmeasured input falls back to the bound rather than zero", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 2}, 17},
+			{"the bound never exceeds the task ceiling", map[string]any{"prompt": "a cat", "reference_videos": []any{"https://cdn.example/a.mp4"}, "duration": 20}, 30},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -280,6 +285,141 @@ func TestMrAosoW3Video(t *testing.T) {
 
 		ratios = usage(t, "billing_ratios", "w3.0-video-prime-pro", "w3.0-video-prime-pro", map[string]any{"prompt": "a cat", "resolution": "4k"})
 		assert.InDelta(t, 0.31/0.26, ratios["resolution-4k"], 1e-9)
+	})
+
+	t.Run("measured reference clips bill their real seconds", func(t *testing.T) {
+		body := map[string]any{"prompt": "a cat", "duration": 2, "resolution": "480p",
+			"reference_videos": []any{"https://cdn.example/a.mp4", "https://cdn.example/b.mp4"}}
+
+		// The host names each clip by the key the plugin asked for.
+		value, callErr := plugin.Engine.Call(t.Context(), "listProbeMedia", submitCtx("w3.0-video", "w3.0-video", body))
+		require.NoError(t, callErr)
+		encoded, marshalErr := common.Marshal(value)
+		require.NoError(t, marshalErr)
+		assert.JSONEq(t, `[{"key":"ref-0","url":"https://cdn.example/a.mp4","maxSeconds":15},
+			{"key":"ref-1","url":"https://cdn.example/b.mp4","maxSeconds":15}]`, string(encoded))
+
+		// A blank entry is dropped when the body is normalized, so the probe
+		// keys have to follow the normalized list or billing reads the wrong
+		// key back and silently falls back to the bound.
+		sparse := map[string]any{"prompt": "a cat", "duration": 2,
+			"reference_videos": []any{"", "https://cdn.example/b.mp4"}}
+		value, callErr = plugin.Engine.Call(t.Context(), "listProbeMedia", submitCtx("w3.0-video", "w3.0-video", sparse))
+		require.NoError(t, callErr)
+		encoded, marshalErr = common.Marshal(value)
+		require.NoError(t, marshalErr)
+		assert.JSONEq(t, `[{"key":"ref-0","url":"https://cdn.example/b.mp4","maxSeconds":15}]`, string(encoded))
+
+		sparseUsage := submitCtx("w3.0-video", "w3.0-video", sparse)
+		sparseUsage["usagePurpose"] = "facts"
+		sparseUsage["media"] = map[string]any{"ref-0": map[string]any{"seconds": 4}}
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", sparseUsage)
+		require.NoError(t, callErr)
+		assert.Equal(t, float64(6), roundTrip(t, value)["seconds"])
+
+		// An invalid request produces no probe; buildSubmitRequest reports it.
+		value, callErr = plugin.Engine.Call(t.Context(), "listProbeMedia",
+			submitCtx("w3.0-video", "w3.0-video", map[string]any{"prompt": "a cat", "duration": 99}))
+		require.NoError(t, callErr)
+		encoded, marshalErr = common.Marshal(value)
+		require.NoError(t, marshalErr)
+		assert.JSONEq(t, `[]`, string(encoded))
+
+		measured := submitCtx("w3.0-video", "w3.0-video", body)
+		measured["usagePurpose"] = "facts"
+		measured["media"] = map[string]any{
+			"ref-0": map[string]any{"seconds": 2.02},
+			"ref-1": map[string]any{"seconds": 1.5},
+		}
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", measured)
+		require.NoError(t, callErr)
+		assert.Equal(t, 5.52, roundTrip(t, value)["seconds"], "2s output plus the measured 3.52s of input")
+
+		// A clip whose length could not be read is refused before any quota is
+		// reserved: billing it at the upstream limit would stand at several
+		// times the real cost with nothing to settle it.
+		partial := submitCtx("w3.0-video", "w3.0-video", body)
+		partial["media"] = map[string]any{"ref-0": map[string]any{"seconds": 2.02}}
+		_, callErr = plugin.Engine.Call(t.Context(), "buildSubmitRequest", partial)
+		require.ErrorContains(t, callErr, "could not read the duration of reference_videos[1]")
+
+		none := submitCtx("w3.0-video", "w3.0-video", body)
+		_, callErr = plugin.Engine.Call(t.Context(), "buildSubmitRequest", none)
+		require.ErrorContains(t, callErr, "reference_videos[0]")
+
+		// A request without reference videos never depends on a measurement.
+		_, callErr = plugin.Engine.Call(t.Context(), "buildSubmitRequest",
+			submitCtx("w3.0-video", "w3.0-video", map[string]any{"prompt": "a cat", "duration": 2}))
+		require.NoError(t, callErr)
+
+		// Measurements never push the reservation past the task ceiling.
+		long := map[string]any{"prompt": "a cat", "duration": 20, "reference_videos": []any{"https://cdn.example/a.mp4"}}
+		ceiling := submitCtx("w3.0-video", "w3.0-video", long)
+		ceiling["usagePurpose"] = "facts"
+		ceiling["media"] = map[string]any{"ref-0": map[string]any{"seconds": 15}}
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsage", ceiling)
+		require.NoError(t, callErr)
+		assert.Equal(t, float64(30), roundTrip(t, value)["seconds"])
+	})
+
+	t.Run("smart duration settles from the produced clip", func(t *testing.T) {
+		body := map[string]any{"prompt": "a cat", "duration": -1, "resolution": "480p",
+			"reference_videos": []any{"https://cdn.example/a.mp4"}}
+		ctx := submitCtx("w3.0-video", "w3.0-video", body)
+		ctx["media"] = map[string]any{"ref-0": map[string]any{"seconds": 3}}
+
+		// Smart duration cannot be bounded at submission, so it reserves the
+		// ceiling and records what settlement will need.
+		usageCtx := submitCtx("w3.0-video", "w3.0-video", body)
+		usageCtx["usagePurpose"] = "facts"
+		usageCtx["media"] = ctx["media"]
+		value, callErr := plugin.Engine.Call(t.Context(), "extractUsage", usageCtx)
+		require.NoError(t, callErr)
+		assert.Equal(t, float64(30), roundTrip(t, value)["seconds"])
+
+		value, callErr = plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx,
+			map[string]any{"statusCode": 200, "body": map[string]any{"task_info": map[string]any{"id": "u", "status": "pending"}}})
+		require.NoError(t, callErr)
+		state := roundTrip(t, value)["state"].(map[string]any)
+		assert.Equal(t, float64(3), state["input_seconds"])
+		assert.Equal(t, true, state["smart_duration"])
+
+		terminal := map[string]any{"task_info": map[string]any{"id": "u", "status": "completed"}, "videos": []any{mrAosoUpstreamVideo}}
+		value, callErr = plugin.Engine.Call(t.Context(), "listProbeMedia",
+			map[string]any{"taskId": "u", "data": terminal, "state": state})
+		require.NoError(t, callErr)
+		encoded, marshalErr := common.Marshal(value)
+		require.NoError(t, marshalErr)
+		assert.JSONEq(t, `[{"key":"output","url":"`+mrAosoUpstreamVideo+`","maxSeconds":30}]`, string(encoded))
+
+		completion := map[string]any{"taskId": "u", "state": state, "media": map[string]any{"output": map[string]any{"seconds": 6.04}}}
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", completion,
+			map[string]any{"status": "SUCCESS"}, terminal)
+		require.NoError(t, callErr)
+		assert.Equal(t, 9.04, roundTrip(t, value)["seconds"], "3s measured input plus the 6.04s produced")
+
+		// An unmeasurable result keeps the reservation instead of guessing.
+		unmeasured := map[string]any{"taskId": "u", "state": state}
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsageOnComplete", unmeasured,
+			map[string]any{"status": "SUCCESS"}, terminal)
+		require.NoError(t, callErr)
+		assert.Nil(t, value)
+	})
+
+	t.Run("a requested duration needs no completion measurement", func(t *testing.T) {
+		state := map[string]any{"input_seconds": float64(2), "smart_duration": false}
+		terminal := map[string]any{"task_info": map[string]any{"id": "u", "status": "completed"}, "videos": []any{mrAosoUpstreamVideo}}
+		value, callErr := plugin.Engine.Call(t.Context(), "listProbeMedia", map[string]any{"taskId": "u", "data": terminal, "state": state})
+		require.NoError(t, callErr)
+		encoded, marshalErr := common.Marshal(value)
+		require.NoError(t, marshalErr)
+		assert.JSONEq(t, `[]`, string(encoded), "no probe is issued for a length the request already fixed")
+
+		value, callErr = plugin.Engine.Call(t.Context(), "extractUsageOnComplete",
+			map[string]any{"taskId": "u", "state": state, "media": map[string]any{"output": map[string]any{"seconds": 9}}},
+			map[string]any{"status": "SUCCESS"}, terminal)
+		require.NoError(t, callErr)
+		assert.Nil(t, value, "the submission reservation is already exact")
 	})
 
 	t.Run("task status covers every documented spelling", func(t *testing.T) {

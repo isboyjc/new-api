@@ -7,8 +7,9 @@
 // upstream generation URLs never reach a client and the vendor result URL stays
 // inside buildContentRequest, which the gateway proxies.
 //
-// The task envelope carries no usage statistics, so billing settles on the
-// duration reserved at submission; see billableSeconds.
+// The task envelope carries no usage statistics, so the seconds upstream bills
+// are measured instead: the host probes the reference clips before the request
+// is sent, and the produced clip once it exists. See billableSeconds.
 
 const VIDEO_RESOLUTIONS = ["480p", "720p", "1080p"];
 const PRO_VIDEO_RESOLUTIONS = ["1080p", "2k", "4k"];
@@ -49,6 +50,9 @@ const MAX_BILLED_SECONDS = 30;
 const MAX_SEED = 2147483647;
 const MAX_REFERENCE_IMAGES = 10;
 const MAX_REFERENCE_VIDEOS = 5;
+// Reference videos bill their own seconds, and upstream caps their combined
+// length, which bounds the input side of a reservation.
+const MAX_REFERENCE_VIDEO_SECONDS = 15;
 const MAX_REFERENCE_AUDIOS = 5;
 // Upstream rejects input images above 20MB.
 const MAX_INPUT_IMAGE_BYTES = 20971520;
@@ -115,6 +119,7 @@ export const meta = {
   // Literal metadata also supports the dashboard's static script preview.
   models: ["w3.0-video", "w3.0-video-prime", "w3.0-video-pro", "w3.0-video-prime-pro"],
   fetchMode: "per_task",
+  requiredCapabilities: ["media-probe@1"],
   usageSchema: videoUsageSchema(VIDEO_RESOLUTIONS),
   usageExamples: videoUsageExamples(VIDEO_RESOLUTIONS),
   usageProfiles: videoUsageProfiles(),
@@ -268,12 +273,47 @@ function videoAction(body) {
   return "text_to_video";
 }
 
-// Smart duration and reference videos both leave the billable length open, and
-// the task result carries no usage to settle it, so the reservation holds the
-// upstream ceiling for the whole task.
-function billableSeconds(body) {
-  if (body.duration === SMART_DURATION || body.reference_videos) return MAX_BILLED_SECONDS;
-  return body.duration;
+const PROBE_INPUT_PREFIX = "ref-";
+const PROBE_OUTPUT_KEY = "output";
+
+function probedSeconds(media, key) {
+  const entry = media && media[key];
+  const seconds = entry && Number(entry.seconds);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+// Upstream bills the seconds inside the reference videos as well as the seconds
+// it produces, and reports neither back, so the host measures the clips before
+// the request is sent. An unmeasured clip is refused rather than billed at the
+// upstream limit: the reservation would stand at several times the real cost
+// with nothing to settle it, and a clip this gateway cannot fetch is usually
+// one upstream cannot fetch either.
+function inputSeconds(body, media, strict) {
+  const urls = body.reference_videos || [];
+  if (!urls.length) return 0;
+  let total = 0;
+  for (let index = 0; index < urls.length; index++) {
+    const seconds = probedSeconds(media, PROBE_INPUT_PREFIX + index);
+    if (seconds === null) {
+      if (strict)
+        throw new Error(
+          "could not read the duration of reference_videos[" +
+            index +
+            "]; it must be a publicly reachable mp4 or mov URL, and reference video seconds are billed"
+        );
+      return MAX_REFERENCE_VIDEO_SECONDS;
+    }
+    total += seconds;
+  }
+  return Math.min(total, MAX_REFERENCE_VIDEO_SECONDS);
+}
+
+// The output side is the requested duration. Smart duration leaves it to
+// upstream, so a submission can only reserve the ceiling; the produced clip is
+// measured at completion and settles the difference.
+function billableSeconds(body, media, strict) {
+  const output = body.duration === SMART_DURATION ? MAX_BILLED_SECONDS : body.duration;
+  return Math.min(MAX_BILLED_SECONDS, output + inputSeconds(body, media, strict));
 }
 
 function resolutionRatio(model, resolution) {
@@ -328,6 +368,9 @@ function videoURL(body) {
 
 export function buildSubmitRequest(ctx) {
   const converted = convert(ctx);
+  // Refuse here rather than in the usage hook: this runs before any quota is
+  // reserved and reports the offending field to the caller.
+  inputSeconds(converted.body, ctx.media, true);
   return {
     url: generationURL(ctx, converted.model),
     method: "POST",
@@ -348,12 +391,19 @@ export function parseSubmitResponse(ctx, resp) {
   const status = Number(resp.statusCode);
   if (Number.isFinite(status) && status >= 400) throw new Error("upstream returned HTTP " + status);
   if (!trimmed(info.id)) throw new Error("task_info.id is empty");
-  return { taskId: trimmed(info.id), taskData: body };
+  // The measured input seconds cannot be recovered at completion, and whether
+  // upstream chose the length decides if the produced clip is worth measuring.
+  const converted = convert(ctx);
+  const state = {
+    input_seconds: inputSeconds(converted.body, ctx.media),
+    smart_duration: converted.body.duration === SMART_DURATION,
+  };
+  return { taskId: trimmed(info.id), taskData: body, state: state };
 }
 
 export function extractUsage(ctx) {
   const converted = convert(ctx);
-  const seconds = billableSeconds(converted.body);
+  const seconds = billableSeconds(converted.body, ctx.media);
   const resolution = converted.body.resolution;
   if (ctx.usagePurpose === "billing_ratios") {
     const ratios = { seconds: seconds };
@@ -402,10 +452,44 @@ export function parseTaskResult(ctx, body) {
   return { status: "SUCCESS", url: url };
 }
 
-// The task envelope reports no duration, resolution or billing statistics, so
-// there is nothing to settle against: the submission reservation stands.
-export function extractUsageOnComplete(_task, _taskResult, _body) {
-  return null;
+// Upstream reports no usage, so the only settleable quantity is the length of
+// the clip it produced, and that only matters when the request let upstream
+// choose it. A requested duration is already exact, and an unmeasurable clip
+// keeps the reservation rather than guessing.
+export function extractUsageOnComplete(task, _taskResult, _body) {
+  const state = (task && task.state) || {};
+  if (state.smart_duration !== true) return null;
+  const output = probedSeconds(task && task.media, PROBE_OUTPUT_KEY);
+  if (output === null) return null;
+  const input = Number(state.input_seconds);
+  const inputTotal = Number.isFinite(input) && input >= 0 ? Math.min(input, MAX_REFERENCE_VIDEO_SECONDS) : MAX_REFERENCE_VIDEO_SECONDS;
+  return { seconds: Math.min(MAX_BILLED_SECONDS, inputTotal + output) };
+}
+
+// The host measures what this names: the reference clips while the request is
+// still being prepared, and the produced clip at completion.
+export function listProbeMedia(ctx) {
+  if (ctx && ctx.requestBody) {
+    // Index the normalized list, not the raw one: billing reads the same keys
+    // back from the converted body, and a blank entry there shifts every index.
+    let urls;
+    try {
+      urls = convert(ctx).body.reference_videos;
+    } catch (error) {
+      // An invalid request fails later with its own message; probing stays quiet.
+      return [];
+    }
+    if (!Array.isArray(urls)) return [];
+    const wanted = [];
+    for (let index = 0; index < urls.length; index++) {
+      wanted.push({ key: PROBE_INPUT_PREFIX + index, url: urls[index], maxSeconds: MAX_REFERENCE_VIDEO_SECONDS });
+    }
+    return wanted;
+  }
+  // Completion: a requested duration needs no measurement.
+  if (!ctx || !ctx.state || ctx.state.smart_duration !== true) return [];
+  const url = videoURL(ctx.data);
+  return url ? [{ key: PROBE_OUTPUT_KEY, url: url, maxSeconds: MAX_BILLED_SECONDS }] : [];
 }
 
 export function listArtifacts(task) {
