@@ -117,6 +117,14 @@ type TaskContentRequestProvider interface {
 	BuildContentRequest(task *model.Task, artifactKey string, clientRequest TaskArtifactClientRequest) (*TaskContentRequest, error)
 }
 
+// TaskBalanceProvider reads the upstream account balance for a channel this
+// adaptor serves. Only an adaptor that can actually answer implements it; an
+// adaptor that cannot must return an error rather than a zero balance, because
+// the batch refresh disables a channel whose balance reaches zero.
+type TaskBalanceProvider interface {
+	FetchBalance(channel *model.Channel) (float64, error)
+}
+
 type TaskUsageFactsProvider interface {
 	ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any
 }

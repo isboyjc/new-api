@@ -2035,3 +2035,65 @@ func TestTaskAdaptorChainsSunoBatchFetchThroughNewAPIUpstream(t *testing.T) {
 	assert.Equal(t, "SUCCESS", results["task_up_public"].TaskInfo.Status)
 	assert.Equal(t, []string{"POST /suno/submit/MUSIC", "POST /suno/fetch"}, seen)
 }
+
+// A channel whose balance reads as zero is disabled by the batch refresh, so a
+// plugin that cannot report one must produce an error, never an empty balance.
+func TestTaskAdaptorFetchBalanceNeverReportsZeroInsteadOfUnknown(t *testing.T) {
+	var requested string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"available_balance":11934000,"total_balance":11934000,"hold_balance":0}`))
+	}))
+	defer upstream.Close()
+
+	source, err := plugins.Source("mr-aoso")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().RegisterFactory(source, pluginruntime.Options{Key: "mr-aoso"})
+	require.NoError(t, err)
+
+	channelWithKey := func(key string) *model.Channel {
+		baseURL := upstream.URL
+		return &model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: key, BaseURL: &baseURL}
+	}
+
+	balance, err := New(plugin).FetchBalance(channelWithKey("sk-mr-infer|umt-account"))
+	require.NoError(t, err)
+	assert.InDelta(t, 11.934, balance, 1e-9, "millionths of a dollar upstream, dollars in the channel column")
+	assert.Equal(t, "Bearer umt-account", requested, "balance is read with the account credential")
+
+	// No account credential: the plugin declines and the channel keeps whatever
+	// balance it had.
+	balance, err = New(plugin).FetchBalance(channelWithKey("sk-mr-infer"))
+	require.Error(t, err)
+	assert.Zero(t, balance)
+
+	// A plugin without the hooks stays unsupported rather than reporting zero.
+	aliSource, err := plugins.Source("alibaba")
+	require.NoError(t, err)
+	aliPlugin, err := pluginruntime.NewRegistry().RegisterFactory(aliSource, pluginruntime.Options{Key: "alibaba"})
+	require.NoError(t, err)
+	_, err = New(aliPlugin).FetchBalance(channelWithKey("sk-ali"))
+	require.ErrorIs(t, err, errBalanceUnsupported)
+}
+
+func TestTaskAdaptorFetchBalanceRejectsUnusableUpstreamAnswers(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"empty object", `{}`},
+		{"negative balance", `{"available_balance":-1}`},
+		{"not json", `<html>error</html>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer upstream.Close()
+			source, err := plugins.Source("mr-aoso")
+			require.NoError(t, err)
+			plugin, err := pluginruntime.NewRegistry().RegisterFactory(source, pluginruntime.Options{Key: "mr-aoso"})
+			require.NoError(t, err)
+			baseURL := upstream.URL
+			_, err = New(plugin).FetchBalance(&model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "sk-mr-infer|umt-account", BaseURL: &baseURL})
+			require.Error(t, err)
+		})
+	}
+}

@@ -422,6 +422,49 @@ func TestMrAosoW3Video(t *testing.T) {
 		assert.Nil(t, value, "the submission reservation is already exact")
 	})
 
+	t.Run("balance is read with the account credential only", func(t *testing.T) {
+		// One channel key carries both credentials; the vendor refuses each on
+		// the other's endpoints, so they must never be swapped.
+		both := map[string]any{"baseUrl": "https://api.mulerouter.ai", "apiKey": "sk-mr-infer|umt-account"}
+		value, callErr := plugin.Engine.Call(t.Context(), "buildBalanceRequest", both)
+		require.NoError(t, callErr)
+		request := roundTrip(t, value)
+		assert.Equal(t, "https://api.mulerouter.ai/user/billing/balance", request["url"])
+		assert.Equal(t, "GET", request["method"])
+		assert.Equal(t, "Bearer umt-account", request["headers"].(map[string]any)["Authorization"])
+
+		inference := submitCtx("w3.0-video", "w3.0-video", map[string]any{"prompt": "a cat"})
+		inference["apiKey"] = "sk-mr-infer|umt-account"
+		value, callErr = plugin.Engine.Call(t.Context(), "buildSubmitRequest", inference)
+		require.NoError(t, callErr)
+		assert.Equal(t, "Bearer sk-mr-infer", roundTrip(t, value)["headers"].(map[string]any)["Authorization"],
+			"generation must not receive the account credential")
+
+		// A channel with no account credential declines instead of reporting an
+		// empty balance, which would disable the channel.
+		value, callErr = plugin.Engine.Call(t.Context(), "buildBalanceRequest",
+			map[string]any{"baseUrl": "https://api.mulerouter.ai", "apiKey": "sk-mr-infer"})
+		require.NoError(t, callErr)
+		assert.Nil(t, value)
+
+		// Millionths of a dollar on the wire, dollars in the channel column.
+		value, callErr = plugin.Engine.Call(t.Context(), "parseBalance", both,
+			map[string]any{"user_id": "u", "total_balance": 11934000, "available_balance": 11934000, "hold_balance": 0})
+		require.NoError(t, callErr)
+		assert.InDelta(t, 11.934, roundTrip(t, value)["balance"], 1e-9)
+
+		// Held funds are not available, so the available figure is the one shown.
+		value, callErr = plugin.Engine.Call(t.Context(), "parseBalance", both,
+			map[string]any{"total_balance": 11934000, "available_balance": 5000000, "hold_balance": 6934000})
+		require.NoError(t, callErr)
+		assert.InDelta(t, 5, roundTrip(t, value)["balance"], 1e-9)
+
+		for _, broken := range []map[string]any{{}, {"available_balance": "many"}, {"available_balance": -1}} {
+			_, callErr = plugin.Engine.Call(t.Context(), "parseBalance", both, broken)
+			require.ErrorContains(t, callErr, "no usable balance")
+		}
+	})
+
 	t.Run("task status covers every documented spelling", func(t *testing.T) {
 		cases := []struct {
 			reported string

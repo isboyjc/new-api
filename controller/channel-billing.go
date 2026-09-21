@@ -14,6 +14,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -505,7 +507,32 @@ func fetchAdvancedCustomBalance(channel *model.Channel) (channelBalanceResult, e
 	return channelBalanceResult{RawResponse: string(formatted)}, nil
 }
 
+// taskPluginChannelBalance asks the plugin bound to a Task Plugin channel for
+// its upstream balance. A plugin that does not report one, or a channel holding
+// no credential for it, is an error rather than a zero balance: the batch
+// refresh disables a channel whose balance reads as empty.
+func taskPluginChannelBalance(channel *model.Channel) (float64, error) {
+	adaptor := relay.GetTaskAdaptor(constant.TaskPlatform(channel.GetSetting().TaskPluginKey))
+	if adaptor == nil {
+		return 0, errors.New("task plugin is unavailable")
+	}
+	provider, ok := adaptor.(relaychannel.TaskBalanceProvider)
+	if !ok {
+		return 0, errors.New("Task Plugin channels do not support balance queries")
+	}
+	balance, err := provider.FetchBalance(channel)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
 func updateChannelBalance(channel *model.Channel) (channelBalanceResult, error) {
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		balance, err := taskPluginChannelBalance(channel)
+		return channelBalanceResult{Balance: balance}, err
+	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		return fetchAdvancedCustomBalance(channel)
 	}
@@ -587,10 +614,6 @@ func UpdateChannelBalance(c *gin.Context) {
 	channel, err := model.CacheGetChannel(id)
 	if err != nil {
 		common.ApiError(c, err)
-		return
-	}
-	if channel.Type == constant.ChannelTypeTaskPlugin {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Task Plugin channels do not support balance queries"})
 		return
 	}
 	if channel.ChannelInfo.IsMultiKey {

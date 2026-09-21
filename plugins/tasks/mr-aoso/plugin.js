@@ -333,10 +333,26 @@ function generationURL(ctx, model) {
   return apiRoot(ctx) + "/vendors/" + VIDEO_MODELS[model].vendor + "/v1/" + model + "/generation";
 }
 
+// The vendor issues two credential kinds and refuses each on the other's
+// endpoints: an inference key that generates, and an account key that only
+// reads the account. One channel holds both as `<inference key>|<account key>`,
+// the same shape other plugins here use for multi-part credentials.
+function inferenceKey(ctx) {
+  const key = trimmed(ctx.apiKey) || trimmed(ctx.authHeader);
+  const separator = key.indexOf("|");
+  return separator === -1 ? key : key.slice(0, separator).trim();
+}
+
+function accountKey(ctx) {
+  const key = trimmed(ctx.apiKey) || trimmed(ctx.authHeader);
+  const separator = key.indexOf("|");
+  return separator === -1 ? "" : key.slice(separator + 1).trim();
+}
+
 // For an api_key plugin the host puts the bare channel key in authHeader, so
 // the scheme is the plugin's to add. Only prepend it when it is missing.
 function authorization(ctx) {
-  const key = trimmed(ctx.apiKey) || trimmed(ctx.authHeader);
+  const key = inferenceKey(ctx);
   return /^bearer\s/i.test(key) ? key : "Bearer " + key;
 }
 
@@ -490,6 +506,27 @@ export function listProbeMedia(ctx) {
   if (!ctx || !ctx.state || ctx.state.smart_duration !== true) return [];
   const url = videoURL(ctx.data);
   return url ? [{ key: PROBE_OUTPUT_KEY, url: url, maxSeconds: MAX_BILLED_SECONDS }] : [];
+}
+
+// Balance is read with the account key only. Returning nothing leaves the
+// channel on the host's "not supported" answer, which matters because a
+// balance of zero disables a channel.
+export function buildBalanceRequest(ctx) {
+  const account = accountKey(ctx);
+  if (!account) return null;
+  return {
+    url: apiRoot(ctx) + "/user/billing/balance",
+    method: "GET",
+    headers: { Authorization: "Bearer " + account, Accept: "application/json" },
+  };
+}
+
+// The vendor reports balances in millionths of a US dollar; the channel column
+// holds dollars.
+export function parseBalance(ctx, body) {
+  const available = Number(body && body.available_balance);
+  if (!Number.isFinite(available) || available < 0) throw new Error("upstream returned no usable balance");
+  return { balance: available / 1000000 };
 }
 
 export function listArtifacts(task) {

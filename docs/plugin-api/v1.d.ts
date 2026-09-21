@@ -89,5 +89,7 @@ export declare function extractUsage(ctx: DriverContext & {usagePurpose?: "facts
 export declare function extractUsageOnSubmit(ctx: DriverContext, taskData: unknown): Readonly<Record<string, string | number | boolean>> | null;
 export declare function extractUsageOnComplete(task: TaskQueryContext, result: NormalizedTaskResult, data: unknown): Readonly<Record<string, string | number | boolean>> | null;
 export declare function listArtifacts(task: {taskId: string; status: string; action: string; data: unknown; producerVersion: string}): readonly TaskArtifact[];
+export declare function buildBalanceRequest(ctx: {baseUrl: string; apiKey?: string; authHeader: string; upstream: UpstreamContext}): RequestDescriptor | null;
+export declare function parseBalance(ctx: {baseUrl: string; apiKey?: string; authHeader: string}, body: unknown): {balance: number};
 export declare function listProbeMedia(ctx: DriverContext | (TaskQueryContext & {data: unknown})): readonly {key: string; url: string; maxSeconds?: number}[];
 export declare function buildContentRequest(ctx: DriverContext & {artifactKey: string; data: unknown; state?: unknown; upstreamTaskId: string; clientRequest: {method: "GET" | "HEAD"; headers: Readonly<Record<string, string>>}}): RequestDescriptor;
