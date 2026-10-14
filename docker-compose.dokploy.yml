@@ -1,10 +1,10 @@
-# Dokploy deployment — runs the image built by .github/workflows/aoso-image.yml.
+# Dokploy deployment — runs the image built by .github/workflows/dokploy-image.yml.
 #
 # The Dokploy host never compiles anything: GitHub's runners build and push to
 # GHCR, and that workflow pings Dokploy's webhook once the image exists.
 #
 # In Dokploy: Create Service -> Compose -> Provider = Git (this fork),
-# Branch = aoso, Compose Path = ./docker-compose.dokploy.yml.
+# Branch = dokploy, Compose Path = ./docker-compose.dokploy.yml.
 # Set the variables below in the service's "Environment" tab, then add a Domain
 # with Service Name = new-api, Container Port = 3000, HTTPS + Let's Encrypt.
 #
@@ -14,12 +14,12 @@
 #   REDIS_PASSWORD=<strong-password>
 #   SESSION_SECRET=<long-random-string>
 # Optional:
-#   NEW_API_IMAGE=ghcr.io/isboyjc/new-api:aoso-20260921-abc1234  # pin an exact build
+#   NEW_API_IMAGE=ghcr.io/isboyjc/new-api:dokploy-20260921-abc1234  # pin an exact build
 
 services:
   new-api:
-    image: ${NEW_API_IMAGE:-ghcr.io/isboyjc/new-api:aoso}
-    # The :aoso tag moves with every push, so a redeploy must re-resolve it
+    image: ${NEW_API_IMAGE:-ghcr.io/isboyjc/new-api:dokploy}
+    # The :dokploy tag moves with every push, so a redeploy must re-resolve it
     # instead of reusing whatever digest the host already has cached.
     pull_policy: always
     restart: unless-stopped
@@ -40,7 +40,7 @@ services:
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
-      - NODE_NAME=aoso-node-1
+      - NODE_NAME=new-api-node-1
       # - STREAMING_TIMEOUT=300
     volumes:
       - new_api_data:/data

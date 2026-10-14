@@ -1,4 +1,4 @@
-# Builds the aoso branch into a container image on GitHub's runners and pushes
+# Builds the dokploy branch into a container image on GitHub's runners and pushes
 # it to this repository's GHCR namespace, so the Dokploy host only ever pulls.
 #
 # Deliberately separate from the upstream docker-build workflows: those target
@@ -10,16 +10,16 @@
 #
 # Action versions are pinned to the same commits the upstream workflows use.
 
-name: Build aoso image
+name: Build dokploy image
 
 on:
   push:
     branches:
-      - aoso
+      - dokploy
   workflow_dispatch:
 
 concurrency:
-  group: aoso-image-${{ github.ref }}
+  group: dokploy-image-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
         id: meta
         run: |
           IMAGE="ghcr.io/$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          VERSION="aoso-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
+          VERSION="dokploy-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           # The Dockerfile stamps this into both the Go binary and the frontend.
@@ -66,7 +66,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ steps.meta.outputs.image }}:aoso
+            ${{ steps.meta.outputs.image }}:dokploy
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -87,7 +87,7 @@ jobs:
           {
             echo "### Image pushed"
             echo '```'
-            echo "${{ steps.meta.outputs.image }}:aoso"
+            echo "${{ steps.meta.outputs.image }}:dokploy"
             echo "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
