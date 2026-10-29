@@ -81,7 +81,7 @@ func (a *TaskAdaptor) FetchBalance(channel *model.Channel) (float64, error) {
 	if !ok {
 		return 0, errors.New("plugin balance hook must return an object")
 	}
-	balance, numeric := usageNumber(result["balance"], false)
+	balance, numeric := usageNumber(result["balance"])
 	if !numeric || balance < 0 {
 		return 0, errors.New("plugin returned an invalid balance")
 	}
