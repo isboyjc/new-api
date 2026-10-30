@@ -1,0 +1,13 @@
+services:
+  new-api:
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      SESSION_COOKIE_SECURE: "false"
+      SESSION_COOKIE_TRUSTED_URL: ""
+
+networks:
+  dokploy-network:
+    external: false
+    driver: bridge

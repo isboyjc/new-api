@@ -122,6 +122,13 @@ export function SidebarModulesCard() {
           description: t('Balance and top-up management'),
         },
         {
+          key: 'redeem',
+          title: t('Redemption Code Top-up'),
+          description: t(
+            'Purchase redemption codes to add funds to your wallet.'
+          ),
+        },
+        {
           key: 'personal',
           title: t('Personal Settings'),
           description: t('Personal info settings'),

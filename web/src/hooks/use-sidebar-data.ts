@@ -117,6 +117,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('Redemption Code Top-up'),
+            url: '/wallet/redeem',
+            icon: Ticket,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,

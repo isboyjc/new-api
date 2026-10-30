@@ -16,10 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Info, Receipt } from 'lucide-react'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { useIsSidebarModuleVisible } from '@/hooks/use-sidebar-config'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -30,9 +34,14 @@ import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
+import type { RedemptionResult } from './components/redemption-code-form'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
-import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
+import {
+  DEFAULT_DISCOUNT_RATE,
+  PAYMENT_TYPES,
+  WALLET_ONLINE_TOPUP_ENABLED,
+} from './constants'
 import {
   useTopupInfo,
   usePayment,
@@ -75,12 +84,15 @@ export function Wallet(props: WalletProps) {
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(false)
   const [redemptionCode, setRedemptionCode] = useState('')
+  const [redemptionResult, setRedemptionResult] =
+    useState<RedemptionResult>(null)
   const [creemDialogOpen, setCreemDialogOpen] = useState(false)
   const [selectedCreemProduct, setSelectedCreemProduct] =
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
 
   const { status } = useStatus()
+  const showCodePurchase = useIsSidebarModuleVisible('/wallet/redeem')
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
@@ -139,6 +151,7 @@ export function Wallet(props: WalletProps) {
   // Initialize topup amount when topup info is loaded
   const topupAmountInitializedRef = useRef(false)
   useEffect(() => {
+    if (!WALLET_ONLINE_TOPUP_ENABLED) return
     if (topupInfo && !topupAmountInitializedRef.current) {
       topupAmountInitializedRef.current = true
       const minTopup = getMinTopupAmount(topupInfo)
@@ -213,13 +226,21 @@ export function Wallet(props: WalletProps) {
 
   // Handle redemption
   const handleRedeem = async () => {
-    if (!redemptionCode) return
+    const code = redemptionCode.trim()
+    if (!code || redeeming) return
 
-    const success = await redeemCode(redemptionCode)
+    setRedemptionResult(null)
+    const success = await redeemCode(code)
+    setRedemptionResult(success ? 'success' : 'error')
     if (success) {
       setRedemptionCode('')
       await fetchUser()
     }
+  }
+
+  const handleRedemptionCodeChange = (code: string) => {
+    setRedemptionCode(code)
+    setRedemptionResult(null)
   }
 
   // Handle transfer
@@ -286,6 +307,16 @@ export function Wallet(props: WalletProps) {
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            variant='outline'
+            className='h-9 rounded-md'
+            onClick={() => setBillingDialogOpen(true)}
+          >
+            <Receipt data-icon='inline-start' />
+            {t('Order History')}
+          </Button>
+        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
@@ -298,6 +329,27 @@ export function Wallet(props: WalletProps) {
               }
             >
               <div id='wallet-add-funds' className='scroll-mt-4'>
+                {topupInfo && topupInfo.enable_redemption !== false && (
+                  <Alert
+                    role='note'
+                    className='bg-primary/5 border-primary/15 mb-5 rounded-lg p-4'
+                  >
+                    <Info aria-hidden='true' className='text-primary' />
+                    <AlertTitle>{t('Top-up Instructions')}</AlertTitle>
+                    <AlertDescription className='mt-1 flex flex-col gap-1 text-sm leading-relaxed text-pretty'>
+                      <div>
+                        {t(
+                          'Purchase a redemption code, then return to your wallet to add funds.'
+                        )}
+                      </div>
+                      <div>
+                        {t(
+                          'For business payments or invoices, contact customer service. See announcements for the customer service QQ number.'
+                        )}
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
@@ -310,14 +362,17 @@ export function Wallet(props: WalletProps) {
                   onPaymentMethodSelect={handlePaymentMethodSelect}
                   paymentLoading={paymentLoading}
                   redemptionCode={redemptionCode}
-                  onRedemptionCodeChange={setRedemptionCode}
+                  onRedemptionCodeChange={handleRedemptionCodeChange}
                   onRedeem={handleRedeem}
                   redeeming={redeeming}
-                  topupLink={topupInfo?.topup_link}
+                  redemptionResult={redemptionResult}
+                  topupLink={
+                    showCodePurchase ? topupInfo?.topup_link : undefined
+                  }
+                  showCodePurchase={showCodePurchase}
                   loading={topupLoading}
                   priceRatio={(status?.price as number) || 1}
                   usdExchangeRate={effectiveUsdExchangeRate}
-                  onOpenBilling={() => setBillingDialogOpen(true)}
                   creemProducts={topupInfo?.creem_products}
                   enableCreemTopup={topupInfo?.enable_creem_topup}
                   onCreemProductSelect={handleCreemProductSelect}

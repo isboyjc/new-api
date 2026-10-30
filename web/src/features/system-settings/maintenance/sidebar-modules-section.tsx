@@ -128,6 +128,12 @@ export function SidebarModulesSection({
         title: t('Wallet'),
         description: t('Top up balance and view billing history.'),
       },
+      redeem: {
+        title: t('Redemption Code Top-up'),
+        description: t(
+          'Purchase redemption codes to add funds to your wallet.'
+        ),
+      },
       personal: {
         title: t('Profile'),
         description: t('Personal settings and profile management.'),

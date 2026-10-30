@@ -73,8 +73,8 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   return result
 }
 
-describe('security sidebar visibility', () => {
-  it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {
+describe('personal sidebar visibility', () => {
+  it('old configurations show the redemption top-up entry and keep API Keys', () => {
     const { result } = sidebarFor(
       { personal: { enabled: true, personal: true, topup: true } },
       { personal: { enabled: true, personal: true } }
@@ -83,12 +83,48 @@ describe('security sidebar visibility', () => {
       result.current
         .find((group) => group.id === 'personal')
         ?.items.map((item) => item.title)
-    ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+    ).toEqual([
+      'Wallet',
+      'Redemption Code Top-up',
+      'Profile',
+      'Security & Access',
+    ])
     expect(
       result.current
         .flatMap((group) => group.items)
         .some((item) => item.title === 'API Keys')
     ).toBe(true)
+  })
+
+  it.each([
+    [{ personal: { enabled: true, redeem: false } }, undefined],
+    [{ personal: { enabled: false } }, { personal: { redeem: true } }],
+    [undefined, { personal: { enabled: true, redeem: false } }],
+    [undefined, { personal: { enabled: false } }],
+  ])(
+    'admin or user disablement hides Redemption Code Top-up (%j, %j)',
+    (admin, user) => {
+      const { result } = sidebarFor(admin, user)
+      expect(
+        result.current
+          .flatMap((group) => group.items)
+          .some((item) => item.title === 'Redemption Code Top-up')
+      ).toBe(false)
+    }
+  )
+  it('saves the independent purchase toggle without hiding Wallet', () => {
+    const config = parseSidebarModulesAdmin('{"personal":{"topup":true}}')
+    expect(config.personal.redeem).toBe(true)
+    config.personal.redeem = false
+    const { result } = sidebarFor(
+      parseSidebarModulesAdmin(serializeSidebarModulesAdmin(config))
+    )
+    const items =
+      result.current.find((group) => group.id === 'personal')?.items ?? []
+    expect(items.map((item) => item.title)).toContain('Wallet')
+    expect(items.map((item) => item.title)).not.toContain(
+      'Redemption Code Top-up'
+    )
   })
   it.each([
     [{ personal: { enabled: true, security: false } }, undefined],

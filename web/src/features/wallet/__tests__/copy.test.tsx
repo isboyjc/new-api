@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -82,6 +83,7 @@ it.each([
     render(
       <I18nextProvider i18n={i18n}>
         <RechargeFormCard
+          showOnlineTopup
           topupInfo={{
             enable_online_topup: true,
             enable_stripe_topup: false,
@@ -108,6 +110,7 @@ it.each([
         />
       </I18nextProvider>
     )
+    await userEvent.click(screen.getByRole('tab', { name: '在线支付' }))
     expect(screen.getByRole('button', { name: /^100 / })).toHaveTextContent(
       `优惠 20%支付 ${paid} • 节省 ${saved}`
     )

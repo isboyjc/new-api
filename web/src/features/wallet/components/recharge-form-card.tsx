@@ -16,17 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
+import { Ticket, Loader2, Receipt, WalletCards } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TitledCard } from '@/components/ui/titled-card'
 import {
   Tooltip,
@@ -37,6 +37,7 @@ import {
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { WALLET_ONLINE_TOPUP_ENABLED } from '../constants'
 import {
   formatCurrency,
   getDiscountLabel,
@@ -52,6 +53,10 @@ import type {
   WaffoPayMethod,
 } from '../types'
 import { CreemProductsSection } from './creem-products-section'
+import {
+  RedemptionCodeForm,
+  type RedemptionResult,
+} from './redemption-code-form'
 
 interface RechargeFormCardProps {
   topupInfo: TopupInfo | null
@@ -68,7 +73,10 @@ interface RechargeFormCardProps {
   onRedemptionCodeChange: (code: string) => void
   onRedeem: () => void
   redeeming: boolean
+  redemptionResult?: RedemptionResult
   topupLink?: string
+  showCodePurchase?: boolean
+  showOnlineTopup?: boolean
   loading?: boolean
   priceRatio?: number
   usdExchangeRate?: number
@@ -98,7 +106,10 @@ export function RechargeFormCard({
   onRedemptionCodeChange,
   onRedeem,
   redeeming,
+  redemptionResult,
   topupLink,
+  showCodePurchase = true,
+  showOnlineTopup = WALLET_ONLINE_TOPUP_ENABLED,
   loading,
   priceRatio = 1,
   usdExchangeRate = 1,
@@ -135,13 +146,18 @@ export function RechargeFormCard({
     topupInfo?.enable_stripe_topup ||
     enableWaffoTopup ||
     enableWaffoPancakeTopup
-  const hasAnyTopup = hasConfigurableTopup || enableCreemTopup
+  const hasAnyTopup =
+    showOnlineTopup && (hasConfigurableTopup || enableCreemTopup)
   const hasStandardPaymentMethods =
     Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
+  const [rechargeMode, setRechargeMode] = useState<'code' | 'online'>('code')
+  let activeRechargeMode = rechargeMode
+  if (!hasAnyTopup) activeRechargeMode = 'code'
+  else if (!redemptionEnabled) activeRechargeMode = 'online'
 
   if (loading) {
     return (
@@ -150,354 +166,291 @@ export function RechargeFormCard({
           <Skeleton className='h-6 w-32' />
           <Skeleton className='mt-2 h-4 w-48' />
         </CardHeader>
-        <CardContent className='space-y-4 p-3 sm:space-y-6 sm:p-5'>
-          <div className='space-y-4 sm:space-y-6'>
-            {/* Preset Amounts Skeleton */}
-            <div className='space-y-3'>
-              <Skeleton className='h-3 w-16' />
-              <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-                {Array.from({ length: 8 }, (_, index) => `preset-${index}`).map(
-                  (key) => (
-                    <Skeleton key={key} className='h-[72px] rounded-lg' />
-                  )
-                )}
-              </div>
+        <CardContent
+          role='status'
+          aria-label={t('Loading')}
+          className='grid gap-6 p-5 md:grid-cols-2'
+        >
+          {['purchase', 'redeem'].map((key) => (
+            <div key={key} className='flex flex-col gap-4'>
+              <Skeleton className='h-6 w-32' />
+              <Skeleton className='h-4 w-full' />
+              <Skeleton className='h-12 w-full rounded-md' />
+              <Skeleton className='h-10 w-full rounded-md' />
             </div>
-
-            {/* Custom Amount Input Skeleton */}
-            <div className='space-y-3'>
-              <Skeleton className='h-3 w-28' />
-              <Skeleton className='h-[42px] w-full' />
-            </div>
-
-            {/* Payment Methods Skeleton */}
-            <div className='space-y-3'>
-              <Skeleton className='h-3 w-32' />
-              <div className='flex flex-wrap gap-3'>
-                {['primary', 'secondary', 'tertiary'].map((key) => (
-                  <Skeleton key={key} className='h-10 w-24 rounded-lg' />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Redemption Code Section Skeleton */}
-          <div className='space-y-3 border-t pt-8'>
-            <Skeleton className='h-3 w-24' />
-            <div className='flex gap-2'>
-              <Skeleton className='h-10 flex-1' />
-              <Skeleton className='h-10 w-20' />
-            </div>
-          </div>
+          ))}
         </CardContent>
       </Card>
     )
   }
 
-  return (
-    <TitledCard
-      title={t('Add Funds')}
-      description={t('Choose an amount and payment method')}
-      icon={<WalletCards className='h-4 w-4' />}
-      iconTone='success'
-      disableHoverEffect
-      action={
-        onOpenBilling ? (
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={onOpenBilling}
-            className='w-full gap-2 sm:w-auto'
-          >
-            <Receipt className='h-4 w-4' />
-            {t('Order History')}
-          </Button>
-        ) : null
-      }
-      contentClassName='space-y-4 sm:space-y-6'
-    >
-      {/* Online Topup Section */}
-      {hasAnyTopup ? (
-        <div className='space-y-4 sm:space-y-6'>
-          {hasConfigurableTopup && (
-            <>
-              {presetAmounts.length > 0 && (
-                <div className='space-y-2.5 sm:space-y-3'>
-                  <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                    {t('Amount')}
-                  </Label>
-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
-                    {presetAmounts.map((preset) => {
-                      const discount =
-                        preset.discount ||
-                        topupInfo?.discount?.[preset.value] ||
-                        1.0
-                      const {
-                        displayValue,
-                        actualPrice,
-                        savedAmount,
-                        hasDiscount,
-                      } = calculatePresetPricing(
-                        preset.value,
-                        priceRatio,
-                        discount,
-                        usdExchangeRate
-                      )
-                      return (
-                        <Button
-                          key={preset.value}
-                          variant='outline'
-                          className={cn(
-                            'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
-                            selectedPreset === preset.value
-                              ? 'border-foreground bg-foreground/5 dark:border-foreground dark:bg-foreground/10'
-                              : 'border-muted'
-                          )}
-                          onClick={() => onSelectPreset(preset)}
-                        >
-                          <div className='flex w-full items-center justify-between'>
-                            <div className='text-base font-semibold sm:text-lg'>
-                              {formatNumber(displayValue)}
-                            </div>
-                            {hasDiscount && (
-                              <div className='text-xs font-medium text-green-600'>
-                                {getDiscountLabel(discount, t)}
-                              </div>
-                            )}
+  const onlineContent = (
+    <div className='space-y-4 sm:space-y-6'>
+      {hasConfigurableTopup && (
+        <>
+          {presetAmounts.length > 0 && (
+            <div className='space-y-2.5 sm:space-y-3'>
+              <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+                {t('Amount')}
+              </Label>
+              <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
+                {presetAmounts.map((preset) => {
+                  const discount =
+                    preset.discount ||
+                    topupInfo?.discount?.[preset.value] ||
+                    1.0
+                  const {
+                    displayValue,
+                    actualPrice,
+                    savedAmount,
+                    hasDiscount,
+                  } = calculatePresetPricing(
+                    preset.value,
+                    priceRatio,
+                    discount,
+                    usdExchangeRate
+                  )
+                  return (
+                    <Button
+                      key={preset.value}
+                      variant='outline'
+                      className={cn(
+                        'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
+                        selectedPreset === preset.value
+                          ? 'border-foreground bg-foreground/5 dark:border-foreground dark:bg-foreground/10'
+                          : 'border-muted'
+                      )}
+                      onClick={() => onSelectPreset(preset)}
+                    >
+                      <div className='flex w-full items-center justify-between'>
+                        <div className='text-base font-semibold sm:text-lg'>
+                          {formatNumber(displayValue)}
+                        </div>
+                        {hasDiscount && (
+                          <div className='text-xs font-medium text-green-600'>
+                            {getDiscountLabel(discount, t)}
                           </div>
-                          <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
-                            {hasDiscount && savedAmount > 0 ? (
-                              <Trans
-                                t={t}
-                                i18nKey='Pay {{amount}} <savings>• Save {{saved}}</savings>'
-                                values={{
-                                  amount: formatCurrency(actualPrice),
-                                  saved: formatCurrency(savedAmount),
-                                }}
-                                components={{
-                                  savings: <span className='text-green-600' />,
-                                }}
-                              />
-                            ) : (
-                              t('Pay {{amount}}', {
-                                amount: formatCurrency(actualPrice),
-                              })
-                            )}
-                          </div>
-                        </Button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className='space-y-2.5 sm:space-y-3'>
-                <Label
-                  htmlFor='topup-amount'
-                  className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
-                >
-                  {t('Custom Amount')}
-                </Label>
-                <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
-                  <Input
-                    id='topup-amount'
-                    type='number'
-                    value={localAmount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    min={minTopup}
-                    placeholder={t('Minimum {{amount}}', { amount: minTopup })}
-                    className='h-9 text-base sm:h-10 sm:text-lg'
-                  />
-                  <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
-                    <span className='text-muted-foreground truncate text-xs'>
-                      {t('Amount to pay:')}
-                    </span>
-                    {calculating ? (
-                      <Skeleton className='h-5 w-16' />
-                    ) : (
-                      <span className='text-sm font-semibold'>
-                        {formatCurrency(paymentAmount)}
-                      </span>
-                    )}
-                  </div>
-                </div>
+                        )}
+                      </div>
+                      <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
+                        {hasDiscount && savedAmount > 0 ? (
+                          <Trans
+                            t={t}
+                            i18nKey='Pay {{amount}} <savings>• Save {{saved}}</savings>'
+                            values={{
+                              amount: formatCurrency(actualPrice),
+                              saved: formatCurrency(savedAmount),
+                            }}
+                            components={{
+                              savings: <span className='text-green-600' />,
+                            }}
+                          />
+                        ) : (
+                          t('Pay {{amount}}', {
+                            amount: formatCurrency(actualPrice),
+                          })
+                        )}
+                      </div>
+                    </Button>
+                  )
+                })}
               </div>
+            </div>
+          )}
 
+          <div className='space-y-2.5 sm:space-y-3'>
+            <Label
+              htmlFor='topup-amount'
+              className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
+            >
+              {t('Custom Amount')}
+            </Label>
+            <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
+              <Input
+                id='topup-amount'
+                type='number'
+                value={localAmount}
+                onChange={(e) => handleAmountChange(e.target.value)}
+                min={minTopup}
+                placeholder={t('Minimum {{amount}}', { amount: minTopup })}
+                className='h-9 text-base sm:h-10 sm:text-lg'
+              />
+              <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
+                <span className='text-muted-foreground truncate text-xs'>
+                  {t('Amount to pay:')}
+                </span>
+                {calculating ? (
+                  <Skeleton className='h-5 w-16' />
+                ) : (
+                  <span className='text-sm font-semibold'>
+                    {formatCurrency(paymentAmount)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className='space-y-2.5 sm:space-y-3'>
+            <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+              {t('Payment Method')}
+            </Label>
+            {hasStandardPaymentMethods ? (
+              <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
+                {topupInfo?.pay_methods?.map((method) => {
+                  const minTopup = Math.max(
+                    method.min_topup || 0,
+                    getMinTopupAmount(topupInfo)
+                  )
+                  const disabled = minTopup > topupAmount
+                  const disabledReason = disabled
+                    ? t('Minimum topup amount: {{amount}}', {
+                        amount: minTopup,
+                      })
+                    : undefined
+                  const disabledLabel = disabled
+                    ? `${t('Minimum:')} ${minTopup}`
+                    : undefined
+
+                  const button = (
+                    <Button
+                      key={method.type}
+                      variant='outline'
+                      onClick={() => onPaymentMethodSelect(method)}
+                      disabled={disabled || !!paymentLoading}
+                      title={disabledReason}
+                      aria-label={
+                        disabledReason
+                          ? `${method.name}. ${disabledReason}`
+                          : method.name
+                      }
+                      className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                    >
+                      {paymentLoading === method.type ? (
+                        <Loader2 className='h-4 w-4 animate-spin' />
+                      ) : (
+                        getPaymentIcon(
+                          method.type,
+                          'h-4 w-4',
+                          method.icon,
+                          method.name
+                        )
+                      )}
+                      <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                        <span className='max-w-full truncate'>
+                          {method.name}
+                        </span>
+                        {disabledLabel && (
+                          <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                            {disabledLabel}
+                          </span>
+                        )}
+                      </span>
+                    </Button>
+                  )
+
+                  return disabled ? (
+                    <TooltipProvider key={method.type}>
+                      <Tooltip>
+                        <TooltipTrigger render={button} />
+                        <TooltipContent>{disabledReason}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    button
+                  )
+                })}
+              </div>
+            ) : null}
+            {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && (
+              <Alert>
+                <AlertDescription>
+                  {t(
+                    'No payment methods available. Please contact administrator.'
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+
+          {enableWaffoTopup &&
+            hasWaffoPaymentMethods &&
+            onWaffoMethodSelect && (
               <div className='space-y-2.5 sm:space-y-3'>
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                  {t('Payment Method')}
+                  {t('Waffo Payment')}
                 </Label>
-                {hasStandardPaymentMethods ? (
-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
-                    {topupInfo?.pay_methods?.map((method) => {
-                      const minTopup = Math.max(
-                        method.min_topup || 0,
-                        getMinTopupAmount(topupInfo)
+                <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
+                  {waffoPayMethods?.map((method, index) => {
+                    const loadingKey = `waffo-${index}`
+                    const methodKey = `${method.payMethodType ?? 'unknown'}-${method.payMethodName ?? method.name}`
+                    const waffoMin = waffoMinTopup || 0
+                    const belowMin = waffoMin > topupAmount
+                    const disabledReason = belowMin
+                      ? t('Minimum topup amount: {{amount}}', {
+                          amount: waffoMin,
+                        })
+                      : undefined
+                    const disabledLabel = belowMin
+                      ? `${t('Minimum:')} ${waffoMin}`
+                      : undefined
+
+                    let methodIcon = getPaymentIcon('waffo')
+                    if (paymentLoading === loadingKey) {
+                      methodIcon = <Loader2 className='h-4 w-4 animate-spin' />
+                    } else if (method.icon) {
+                      methodIcon = (
+                        <img
+                          src={method.icon}
+                          alt={method.name}
+                          className='h-4 w-4 object-contain'
+                        />
                       )
-                      const disabled = minTopup > topupAmount
-                      const disabledReason = disabled
-                        ? t('Minimum topup amount: {{amount}}', {
-                            amount: minTopup,
-                          })
-                        : undefined
-                      const disabledLabel = disabled
-                        ? `${t('Minimum:')} ${minTopup}`
-                        : undefined
+                    }
 
-                      const button = (
-                        <Button
-                          key={method.type}
-                          variant='outline'
-                          onClick={() => onPaymentMethodSelect(method)}
-                          disabled={disabled || !!paymentLoading}
-                          title={disabledReason}
-                          aria-label={
-                            disabledReason
-                              ? `${method.name}. ${disabledReason}`
-                              : method.name
-                          }
-                          className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                        >
-                          {paymentLoading === method.type ? (
-                            <Loader2 className='h-4 w-4 animate-spin' />
-                          ) : (
-                            getPaymentIcon(
-                              method.type,
-                              'h-4 w-4',
-                              method.icon,
-                              method.name
-                            )
-                          )}
-                          <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                            <span className='max-w-full truncate'>
-                              {method.name}
-                            </span>
-                            {disabledLabel && (
-                              <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                                {disabledLabel}
-                              </span>
-                            )}
-                          </span>
-                        </Button>
-                      )
-
-                      return disabled ? (
-                        <TooltipProvider key={method.type}>
-                          <Tooltip>
-                            <TooltipTrigger render={button} />
-                            <TooltipContent>{disabledReason}</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        button
-                      )
-                    })}
-                  </div>
-                ) : null}
-                {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && (
-                  <Alert>
-                    <AlertDescription>
-                      {t(
-                        'No payment methods available. Please contact administrator.'
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </div>
-
-              {enableWaffoTopup &&
-                hasWaffoPaymentMethods &&
-                onWaffoMethodSelect && (
-                  <div className='space-y-2.5 sm:space-y-3'>
-                    <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                      {t('Waffo Payment')}
-                    </Label>
-                    <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
-                      {waffoPayMethods?.map((method, index) => {
-                        const loadingKey = `waffo-${index}`
-                        const methodKey = `${method.payMethodType ?? 'unknown'}-${method.payMethodName ?? method.name}`
-                        const waffoMin = waffoMinTopup || 0
-                        const belowMin = waffoMin > topupAmount
-                        const disabledReason = belowMin
-                          ? t('Minimum topup amount: {{amount}}', {
-                              amount: waffoMin,
-                            })
-                          : undefined
-                        const disabledLabel = belowMin
-                          ? `${t('Minimum:')} ${waffoMin}`
-                          : undefined
-
-                        let methodIcon = getPaymentIcon('waffo')
-                        if (paymentLoading === loadingKey) {
-                          methodIcon = (
-                            <Loader2 className='h-4 w-4 animate-spin' />
-                          )
-                        } else if (method.icon) {
-                          methodIcon = (
-                            <img
-                              src={method.icon}
-                              alt={method.name}
-                              className='h-4 w-4 object-contain'
-                            />
-                          )
+                    const button = (
+                      <Button
+                        key={methodKey}
+                        variant='outline'
+                        onClick={() => onWaffoMethodSelect(method, index)}
+                        disabled={belowMin || !!paymentLoading}
+                        title={disabledReason}
+                        aria-label={
+                          disabledReason
+                            ? `${method.name}. ${disabledReason}`
+                            : method.name
                         }
-
-                        const button = (
-                          <Button
-                            key={methodKey}
-                            variant='outline'
-                            onClick={() => onWaffoMethodSelect(method, index)}
-                            disabled={belowMin || !!paymentLoading}
-                            title={disabledReason}
-                            aria-label={
-                              disabledReason
-                                ? `${method.name}. ${disabledReason}`
-                                : method.name
-                            }
-                            className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                          >
-                            {methodIcon}
-                            <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                              <span className='max-w-full truncate'>
-                                {method.name}
-                              </span>
-                              {disabledLabel && (
-                                <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                                  {disabledLabel}
-                                </span>
-                              )}
+                        className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                      >
+                        {methodIcon}
+                        <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                          <span className='max-w-full truncate'>
+                            {method.name}
+                          </span>
+                          {disabledLabel && (
+                            <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                              {disabledLabel}
                             </span>
-                          </Button>
-                        )
+                          )}
+                        </span>
+                      </Button>
+                    )
 
-                        return belowMin ? (
-                          <TooltipProvider key={methodKey}>
-                            <Tooltip>
-                              <TooltipTrigger render={button} />
-                              <TooltipContent>{disabledReason}</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          button
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-            </>
-          )}
-        </div>
-      ) : (
-        <Alert>
-          <AlertDescription>
-            {t(
-              'Online topup is not enabled. Please use redemption code or contact administrator.'
+                    return belowMin ? (
+                      <TooltipProvider key={methodKey}>
+                        <Tooltip>
+                          <TooltipTrigger render={button} />
+                          <TooltipContent>{disabledReason}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      button
+                    )
+                  })}
+                </div>
+              </div>
             )}
-          </AlertDescription>
-        </Alert>
+        </>
       )}
-
-      {/* Creem Products Section */}
       {enableCreemTopup &&
         Array.isArray(creemProducts) &&
         creemProducts.length > 0 &&
@@ -512,63 +465,109 @@ export function RechargeFormCard({
             />
           </div>
         )}
+    </div>
+  )
 
-      {/* Redemption Code Section */}
-      {redemptionEnabled ? (
-        <div className='space-y-2.5 border-t pt-4 sm:space-y-3 sm:pt-6'>
-          <div className='flex items-center gap-2'>
-            <IconBadge tone='warning' size='xs'>
-              <Gift />
-            </IconBadge>
-            <Label
-              htmlFor='redemption-code'
-              className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
-            >
-              {t('Have a Code?')}
-            </Label>
-          </div>
-          <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-            <Input
-              id='redemption-code'
-              value={redemptionCode}
-              onChange={(e) => onRedemptionCodeChange(e.target.value)}
-              placeholder={t('Enter your redemption code')}
-              className='h-9 min-w-0'
-            />
-            <Button
-              onClick={onRedeem}
-              disabled={redeeming}
-              variant='outline'
-              className='h-9 px-4'
-            >
-              {redeeming && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-              {t('Redeem')}
-            </Button>
-          </div>
-          {topupLink && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Need a redemption code?')}{' '}
-              <a
-                href={topupLink}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
-              >
-                {t('Get one here')}
-                <ExternalLink className='h-3 w-3' />
-              </a>
-            </p>
-          )}
-        </div>
-      ) : (
-        <Alert className='border-t'>
+  const codeContent = (
+    <RedemptionCodeForm
+      redemptionCode={redemptionCode}
+      onRedemptionCodeChange={onRedemptionCodeChange}
+      onRedeem={onRedeem}
+      redeeming={redeeming}
+      redemptionResult={redemptionResult}
+      topupLink={topupLink}
+      showCodePurchase={showCodePurchase}
+    />
+  )
+
+  let rechargeContent = codeContent
+  if (!redemptionEnabled) {
+    rechargeContent = (
+      <div className='space-y-4'>
+        {hasAnyTopup && onlineContent}
+        <Alert>
           <AlertDescription>
             {t(
               'Redemption codes are disabled until the administrator confirms compliance terms.'
             )}
           </AlertDescription>
         </Alert>
-      )}
+      </div>
+    )
+  }
+  if (redemptionEnabled && hasAnyTopup) {
+    rechargeContent = (
+      <Tabs
+        value={activeRechargeMode}
+        onValueChange={(value) => {
+          if (value === 'code' || value === 'online') setRechargeMode(value)
+        }}
+      >
+        <TabsList
+          variant='line'
+          className='grid h-auto w-full grid-cols-2 items-stretch group-data-horizontal/tabs:h-auto sm:w-fit'
+        >
+          <TabsTrigger
+            value='code'
+            className='h-auto min-h-11 px-3 py-2 leading-snug whitespace-normal'
+          >
+            <Ticket data-icon='inline-start' />
+            <span className='min-w-0'>{t('Redemption Code Top-up')}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value='online'
+            className='h-auto min-h-11 px-3 py-2 leading-snug whitespace-normal'
+          >
+            <WalletCards data-icon='inline-start' />
+            <span className='min-w-0'>{t('Online Payment')}</span>
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value='code' className='mt-6'>
+          {codeContent}
+        </TabsContent>
+        <TabsContent value='online' className='mt-6'>
+          {onlineContent}
+        </TabsContent>
+      </Tabs>
+    )
+  }
+
+  let description: string | undefined = t(
+    'Top up your balance with a redemption code.'
+  )
+  if (activeRechargeMode === 'online') {
+    description = t('Choose an amount and payment method')
+  } else if (!showCodePurchase) {
+    description = t('Enter your redemption code')
+  }
+  if (!redemptionEnabled && !hasAnyTopup) description = undefined
+
+  return (
+    <TitledCard
+      title={t('Add Funds')}
+      description={description}
+      icon={<WalletCards className='h-4 w-4' />}
+      iconTone='success'
+      className='rounded-lg'
+      titleClassName='tracking-normal'
+      headerClassName='rounded-t-lg'
+      contentClassName='p-5 sm:p-6'
+      disableHoverEffect
+      action={
+        onOpenBilling ? (
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={onOpenBilling}
+            className='w-full gap-2 sm:w-auto'
+          >
+            <Receipt className='h-4 w-4' />
+            {t('Order History')}
+          </Button>
+        ) : null
+      }
+    >
+      {rechargeContent}
     </TitledCard>
   )
 }

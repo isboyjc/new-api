@@ -20,6 +20,9 @@ For commercial licensing, please contact support@quantumnous.com
 // Wallet Constants
 // ============================================================================
 
+// Reopen wallet online payments here when they are ready to launch.
+export const WALLET_ONLINE_TOPUP_ENABLED = false
+
 /**
  * Default preset amount multipliers
  * Used to generate quick select amounts based on minimum topup

@@ -169,14 +169,17 @@ export function useTopupInfo() {
   const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null)
   const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
   const fetchTopupInfo = useCallback(async () => {
     try {
       setLoading(true)
+      setError(false)
 
       const response = await getTopupInfo()
 
       if (!response.success || !response.data) {
+        setError(true)
         handleServerError(response)
         return
       }
@@ -209,6 +212,7 @@ export function useTopupInfo() {
         setPresetAmounts(defaultPresets)
       }
     } catch (err) {
+      setError(true)
       handleServerError(err)
     } finally {
       setLoading(false)
@@ -231,6 +235,7 @@ export function useTopupInfo() {
     topupInfo,
     presetAmounts,
     loading,
+    error,
     refetch: fetchTopupInfo,
   }
 }

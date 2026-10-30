@@ -34,9 +34,16 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
+      <div className='grid grid-cols-2 overflow-hidden rounded-lg border sm:grid-cols-[1.25fr_1fr_1fr]'>
         {['balance', 'usage', 'requests'].map((key) => (
-          <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+          <div
+            key={key}
+            className={
+              key === 'balance'
+                ? 'col-span-2 px-5 py-4 sm:col-span-1'
+                : 'min-w-0 px-5 py-4'
+            }
+          >
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
             <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
@@ -54,13 +61,6 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     tone: IconBadgeTone
   }[] = [
     {
-      label: t('Current Balance'),
-      value: formatQuota(props.user?.quota ?? 0),
-      description: t('Remaining quota'),
-      icon: WalletCards,
-      tone: 'success',
-    },
-    {
       label: t('Total Usage'),
       value: formatQuota(props.user?.used_quota ?? 0),
       description: t('Total consumed quota'),
@@ -77,19 +77,42 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   ]
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
-      {stats.map((item) => (
-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+    <section
+      aria-label={t('Wallet Overview')}
+      className='grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden rounded-lg border sm:grid-cols-[1.25fr_1fr_1fr]'
+    >
+      <div className='bg-success/5 row-span-2 flex min-w-0 items-center gap-3 border-r px-3 py-4 sm:row-span-1 sm:gap-4 sm:px-5 sm:py-5'>
+        <IconBadge tone='success' size='lg' className='max-sm:hidden'>
+          <WalletCards />
+        </IconBadge>
+        <div className='min-w-0'>
+          <div className='text-muted-foreground text-xs font-medium'>
+            {t('Current Balance')}
+          </div>
+          <div className='mt-1 text-3xl font-semibold break-all tabular-nums'>
+            {formatQuota(props.user?.quota ?? 0)}
+          </div>
+        </div>
+      </div>
+      {stats.map((item, index) => (
+        <div
+          key={item.label}
+          className={
+            index === 0
+              ? 'col-start-2 grid min-w-0 grid-cols-2 items-center gap-2 border-b px-3 py-3 sm:col-auto sm:block sm:border-r sm:border-b-0 sm:px-5 sm:py-5'
+              : 'col-start-2 grid min-w-0 grid-cols-2 items-center gap-2 px-3 py-3 sm:col-auto sm:block sm:px-5 sm:py-5'
+          }
+        >
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
-            <IconBadge tone={item.tone} size='stat'>
+            <IconBadge tone={item.tone} size='stat' className='max-sm:hidden'>
               <item.icon />
             </IconBadge>
-            <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
+            <div className='text-muted-foreground text-xs font-medium'>
               {item.label}
             </div>
           </div>
 
-          <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
+          <div className='text-foreground min-w-0 text-right text-base font-semibold break-all tabular-nums sm:mt-2 sm:text-left sm:text-xl'>
             {item.value}
           </div>
           <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
@@ -97,6 +120,6 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           </div>
         </div>
       ))}
-    </div>
+    </section>
   )
 }

@@ -145,3 +145,21 @@ test.each(['', '-1'])(
     expect(api.put).not.toHaveBeenCalled()
   }
 )
+
+test('saves the purchase link without a separate customer service QQ setting', async () => {
+  await renderSettings()
+  expect(
+    screen.queryByRole('textbox', { name: 'Customer service QQ' })
+  ).not.toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Top-Up Link' }), {
+    target: { value: 'https://payments.example.com/redeem' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => {
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'TopUpLink',
+      value: 'https://payments.example.com/redeem',
+    })
+  })
+  expect(api.put).toHaveBeenCalledTimes(1)
+})
