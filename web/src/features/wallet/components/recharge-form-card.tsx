@@ -476,7 +476,10 @@ export function RechargeFormCard({
       redeeming={redeeming}
       redemptionResult={redemptionResult}
       topupLink={topupLink}
-      showCodePurchase={showCodePurchase}
+      cardStore={topupInfo?.card_store}
+      showCodePurchase={
+        showCodePurchase && topupInfo?.card_store?.enabled !== false
+      }
     />
   )
 

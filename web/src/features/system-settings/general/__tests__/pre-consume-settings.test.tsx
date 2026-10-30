@@ -20,7 +20,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
+  createRoute,
   createRouter,
+  Outlet,
   RouterProvider,
 } from '@tanstack/react-router'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -44,7 +46,6 @@ function Fixture() {
             QuotaForNewUser: 0,
             QuotaForInviter: 0,
             QuotaForInvitee: 0,
-            TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
               trust_quota_usd: 10,
@@ -61,8 +62,19 @@ async function renderSettings() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
+  const root = createRootRoute({ component: Outlet })
+  const quota = createRoute({
+    getParentRoute: () => root,
+    path: '/',
+    component: Fixture,
+  })
+  const cardStore = createRoute({
+    getParentRoute: () => root,
+    path: '/system-settings/billing/$section',
+    component: () => <h1>Card Store Payment</h1>,
+  })
   const router = createRouter({
-    routeTree: createRootRoute({ component: Fixture }),
+    routeTree: root.addChildren([quota, cardStore]),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(
@@ -146,20 +158,22 @@ test.each(['', '-1'])(
   }
 )
 
-test('saves the purchase link without a separate customer service QQ setting', async () => {
+test('directs purchase link configuration to card store payment without a separate QQ setting', async () => {
   await renderSettings()
   expect(
     screen.queryByRole('textbox', { name: 'Customer service QQ' })
   ).not.toBeInTheDocument()
-  fireEvent.change(screen.getByRole('textbox', { name: 'Top-Up Link' }), {
-    target: { value: 'https://payments.example.com/redeem' },
-  })
-  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() => {
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'TopUpLink',
-      value: 'https://payments.example.com/redeem',
-    })
-  })
-  expect(api.put).toHaveBeenCalledTimes(1)
+  expect(
+    screen.queryByRole('textbox', { name: 'Top-Up Link' })
+  ).not.toBeInTheDocument()
+  const link = screen.getByRole('button', { name: 'Card Store Payment' })
+  expect(link).toHaveAttribute(
+    'href',
+    '/system-settings/billing/payment#card-store'
+  )
+  await userEvent.click(link)
+  expect(
+    await screen.findByRole('heading', { name: 'Card Store Payment' })
+  ).toBeVisible()
+  expect(api.put).not.toHaveBeenCalled()
 })

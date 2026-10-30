@@ -25,6 +25,12 @@ import (
 
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
+	cardStore := operation_setting.GetCardStoreConfig()
+	if !complianceConfirmed || !cardStore.Enabled {
+		cardStore = operation_setting.CardStoreConfig{
+			AmountOptions: []operation_setting.CardStoreAmount{},
+		}
+	}
 
 	// 获取支付方式
 	payMethods := operation_setting.PayMethods
@@ -120,7 +126,8 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
-		"topup_link":              common.TopUpLink,
+		"topup_link":              cardStore.StoreURL,
+		"card_store":              cardStore,
 	}
 	common.ApiSuccess(c, data)
 }

@@ -44,8 +44,11 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Separator } from '@/components/ui/separator'
-import { isHttpUrl } from '@/lib/content-format'
-import { cn } from '@/lib/utils'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatCurrencyFromUSD } from '@/lib/currency'
+
+import { isCardStoreUrl } from '../lib/card-store'
+import type { CardStoreConfig } from '../types'
 
 export type RedemptionResult = 'success' | 'error' | null
 
@@ -56,77 +59,139 @@ interface RedemptionCodeFormProps {
   redeeming: boolean
   redemptionResult?: RedemptionResult
   topupLink?: string
+  cardStore?: CardStoreConfig
   showCodePurchase: boolean
 }
 
 export function RedemptionCodeForm(props: RedemptionCodeFormProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const configuredLink = props.topupLink?.trim() || ''
-  const topupLink = isHttpUrl(configuredLink) ? configuredLink : ''
+  const topupLink = isCardStoreUrl(configuredLink) ? configuredLink : ''
   const invalid = props.redemptionResult === 'error'
+  const amounts = props.cardStore?.enabled
+    ? props.cardStore.amount_options
+        .map((option) => ({
+          ...option,
+          url: option.url.trim() || topupLink,
+        }))
+        .filter(
+          (option) =>
+            Number.isFinite(option.amount) &&
+            option.amount > 0 &&
+            isCardStoreUrl(option.url)
+        )
+    : []
 
   return (
-    <div className='@container'>
-      <div
-        className={cn(
-          'grid gap-6',
-          props.showCodePurchase &&
-            '@2xl:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,1.1fr)] @2xl:gap-8'
-        )}
-      >
+    <div className='@container min-w-0'>
+      <div className='flex min-w-0 flex-col gap-6'>
         {props.showCodePurchase && (
           <>
             <section
               aria-labelledby='purchase-code-title'
               className='flex min-w-0 flex-col gap-4'
             >
-              <div className='flex items-center gap-3'>
-                <Badge
-                  variant='outline'
-                  className='bg-primary/5 text-primary border-primary/20 size-7 rounded-md p-0'
+              <div className='flex flex-wrap items-center justify-between gap-3'>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <h3
+                    id='purchase-code-title'
+                    className='text-base font-semibold'
+                  >
+                    {t('Quick Recharge Amounts')}
+                  </h3>
+                  <Badge variant='secondary' className='rounded-md'>
+                    <Store aria-hidden='true' className='size-3' />
+                    {t('Card Store Payment')}
+                  </Badge>
+                </div>
+                <Button
+                  variant='link'
+                  className='h-auto min-h-9 p-0 text-left whitespace-normal'
+                  onClick={() => inputRef.current?.focus()}
                 >
-                  01
-                </Badge>
-                <h3
-                  id='purchase-code-title'
-                  className='text-base font-semibold'
-                >
-                  {t('Purchase Redemption Codes')}
-                </h3>
+                  {t('Already have a code? Redeem it now')}
+                  <ArrowRight data-icon='inline-end' />
+                </Button>
               </div>
               <p className='text-muted-foreground text-sm leading-relaxed'>
                 {t(
-                  'Choose an amount in the shop and complete your purchase to receive a redemption code.'
+                  'Choose a code amount to purchase, then paste the code below to add funds.'
                 )}
               </p>
               {topupLink ? (
-                <div className='flex flex-col gap-2'>
-                  <Button
-                    className='h-12 w-full rounded-md px-4'
-                    onClick={() => inputRef.current?.focus()}
-                    render={
-                      <a
-                        href={topupLink}
-                        target='_blank'
-                        rel='noopener noreferrer'
+                <div className='space-y-4'>
+                  {amounts.length > 0 && (
+                    <div className='grid grid-cols-2 gap-3 @2xl:grid-cols-4'>
+                      {amounts.map((option) => {
+                        const amount = formatCurrencyFromUSD(option.amount, {
+                          locale: toIntlLocale(i18n.language),
+                          abbreviate: false,
+                        })
+                        return (
+                          <Button
+                            key={option.amount}
+                            variant='outline'
+                            className='hover:border-primary/50 hover:bg-primary/5 h-auto min-h-28 min-w-0 flex-col items-start gap-2 rounded-lg p-4 text-left whitespace-normal'
+                            aria-label={t('Purchase {{amount}} code', {
+                              amount,
+                            })}
+                            render={
+                              <a
+                                href={option.url}
+                                target='_blank'
+                                rel='noopener noreferrer'
+                              />
+                            }
+                          >
+                            <span className='w-full text-xl leading-tight font-semibold break-words tabular-nums'>
+                              {amount}
+                            </span>
+                            <span className='text-muted-foreground w-full text-xs leading-relaxed'>
+                              {t('Balance credit')}
+                            </span>
+                            <span className='text-primary flex w-full items-center justify-between gap-2 text-xs'>
+                              {t('Purchase')}
+                              <ExternalLink
+                                aria-hidden='true'
+                                className='size-3.5'
+                              />
+                            </span>
+                          </Button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <Button
+                      variant={amounts.length ? 'outline' : 'default'}
+                      className='h-auto min-h-10 max-w-full rounded-md px-4 py-2 whitespace-normal'
+                      render={
+                        <a
+                          href={topupLink}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        />
+                      }
+                    >
+                      <Store data-icon='inline-start' />
+                      <span className='min-w-0 text-left leading-snug whitespace-normal'>
+                        {t('Purchase Redemption Codes')}
+                      </span>
+                      <ExternalLink
+                        data-icon='inline-end'
+                        className='ml-auto'
                       />
-                    }
-                  >
-                    <Store data-icon='inline-start' />
-                    <span className='min-w-0 text-left leading-snug whitespace-normal'>
-                      {t('Purchase Redemption Codes')}
-                    </span>
-                    <ExternalLink data-icon='inline-end' className='ml-auto' />
-                  </Button>
-                  <Button
-                    variant='ghost'
-                    className='h-10 w-full rounded-md whitespace-normal'
-                    render={<Link to='/wallet/redeem' />}
-                  >
-                    <Ticket data-icon='inline-start' />
-                    {t('Open shop within site')}
-                  </Button>
+                    </Button>
+                    <Button
+                      variant='ghost'
+                      className='h-auto min-h-10 max-w-full rounded-md py-2 whitespace-normal'
+                      render={<Link to='/wallet/redeem' />}
+                    >
+                      <Ticket data-icon='inline-start' />
+                      {t('Open shop within site')}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Alert role='note'>
@@ -137,19 +202,8 @@ export function RedemptionCodeForm(props: RedemptionCodeFormProps) {
                   </AlertDescription>
                 </Alert>
               )}
-              <Button
-                variant='link'
-                className='h-auto min-h-9 justify-start self-start p-0 text-left whitespace-normal'
-                onClick={() => {
-                  inputRef.current?.focus()
-                }}
-              >
-                {t('Already have a code? Redeem it now')}
-                <ArrowRight data-icon='inline-end' />
-              </Button>
             </section>
-            <Separator className='@2xl:hidden' />
-            <Separator orientation='vertical' className='hidden @2xl:block' />
+            <Separator />
           </>
         )}
 
@@ -158,14 +212,10 @@ export function RedemptionCodeForm(props: RedemptionCodeFormProps) {
           className='flex min-w-0 flex-col gap-4'
         >
           <div className='flex items-center gap-3'>
-            {props.showCodePurchase && (
-              <Badge
-                variant='outline'
-                className='bg-success/5 text-success border-success/20 size-7 rounded-md p-0'
-              >
-                02
-              </Badge>
-            )}
+            <Ticket
+              aria-hidden='true'
+              className='text-muted-foreground size-4'
+            />
             <h3 id='redeem-code-title' className='text-base font-semibold'>
               {t('Redeem to Balance')}
             </h3>
@@ -178,60 +228,70 @@ export function RedemptionCodeForm(props: RedemptionCodeFormProps) {
               }
             }}
           >
-            <FieldGroup className='gap-4'>
-              <Field
-                data-invalid={invalid || undefined}
-                data-disabled={props.redeeming || undefined}
-              >
-                <FieldLabel htmlFor='redemption-code'>
-                  {t('Redemption Code')}
-                </FieldLabel>
-                <InputGroup className='h-12 rounded-md'>
-                  <InputGroupInput
-                    ref={inputRef}
-                    id='redemption-code'
-                    value={props.redemptionCode}
-                    onChange={(event) =>
-                      props.onRedemptionCodeChange(event.target.value)
-                    }
-                    placeholder={t('Paste your redemption code')}
-                    autoComplete='off'
-                    spellCheck={false}
-                    aria-invalid={invalid || undefined}
-                    aria-describedby={
-                      invalid ? 'redemption-code-error' : 'redemption-code-hint'
-                    }
-                    disabled={props.redeeming}
-                    className='h-12 font-mono text-sm placeholder:font-sans'
-                  />
-                  <InputGroupAddon>
-                    <Ticket aria-hidden='true' />
-                  </InputGroupAddon>
-                </InputGroup>
-                <FieldDescription id='redemption-code-hint' className='text-xs'>
-                  {t(
-                    'The redeemed amount will be added to your account balance.'
+            <FieldGroup className='gap-3'>
+              <div className='flex flex-col items-start gap-3 @lg:flex-row @lg:items-end'>
+                <Field
+                  className='min-w-0 flex-1'
+                  data-invalid={invalid || undefined}
+                  data-disabled={props.redeeming || undefined}
+                >
+                  <FieldLabel htmlFor='redemption-code'>
+                    {t('Redemption Code')}
+                  </FieldLabel>
+                  <InputGroup className='h-12 rounded-md'>
+                    <InputGroupInput
+                      ref={inputRef}
+                      id='redemption-code'
+                      value={props.redemptionCode}
+                      onChange={(event) =>
+                        props.onRedemptionCodeChange(event.target.value)
+                      }
+                      placeholder={t('Paste your redemption code')}
+                      autoComplete='off'
+                      spellCheck={false}
+                      aria-invalid={invalid || undefined}
+                      aria-describedby={
+                        invalid
+                          ? 'redemption-code-error'
+                          : 'redemption-code-hint'
+                      }
+                      disabled={props.redeeming}
+                      className='h-12 font-mono text-sm placeholder:font-sans'
+                    />
+                    <InputGroupAddon>
+                      <Ticket aria-hidden='true' />
+                    </InputGroupAddon>
+                  </InputGroup>
+                </Field>
+                <Button
+                  type='submit'
+                  variant={
+                    props.redemptionCode.trim() ? 'default' : 'secondary'
+                  }
+                  disabled={!props.redemptionCode.trim() || props.redeeming}
+                  className='h-auto min-h-12 w-full rounded-md px-5 py-3 whitespace-normal @lg:w-auto'
+                >
+                  {props.redeeming ? (
+                    <Loader2
+                      data-icon='inline-start'
+                      className='animate-spin'
+                    />
+                  ) : (
+                    <CircleCheck data-icon='inline-start' />
                   )}
-                </FieldDescription>
-                {invalid && (
-                  <FieldError id='redemption-code-error'>
-                    {t('Redemption failed. Check your code and try again.')}
-                  </FieldError>
+                  {props.redeeming ? t('Redeeming code...') : t('Redeem')}
+                </Button>
+              </div>
+              <FieldDescription id='redemption-code-hint' className='text-xs'>
+                {t(
+                  'The redeemed amount will be added to your account balance.'
                 )}
-              </Field>
-              <Button
-                type='submit'
-                variant={props.redemptionCode.trim() ? 'default' : 'secondary'}
-                disabled={!props.redemptionCode.trim() || props.redeeming}
-                className='h-11 w-full rounded-md px-4'
-              >
-                {props.redeeming ? (
-                  <Loader2 data-icon='inline-start' className='animate-spin' />
-                ) : (
-                  <CircleCheck data-icon='inline-start' />
-                )}
-                {props.redeeming ? t('Redeeming code...') : t('Redeem')}
-              </Button>
+              </FieldDescription>
+              {invalid && (
+                <FieldError id='redemption-code-error'>
+                  {t('Redemption failed. Check your code and try again.')}
+                </FieldError>
+              )}
               {props.redemptionResult === 'success' && (
                 <p
                   role='status'

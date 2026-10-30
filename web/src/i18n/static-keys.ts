@@ -19,6 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Card Store Payment',
+  'Move up',
+  'Move down',
+  'Invalid card store configuration',
+  'Card store links must be valid HTTP or HTTPS URLs.',
+  'Configure up to 24 quick amounts.',
+  'Card store amounts must be greater than 0 and no more than 1,000,000,000 USD.',
+  'Quick amounts must be unique.',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',

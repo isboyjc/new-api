@@ -108,7 +108,65 @@ describe('RedemptionCodePurchasePage', () => {
     )
   })
 
-  it.each(['', '   ', 'javascript:alert(1)', 'not-a-url'])(
+  it('uses the card store URL instead of the legacy link for both purchase actions', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          ...topupInfo,
+          card_store: {
+            enabled: true,
+            store_url: 'https://shop.example.com',
+            amount_options: [],
+          },
+        },
+      },
+    })
+    renderPage()
+    expect(
+      await screen.findByTitle('Redemption code purchase page')
+    ).toHaveAttribute('src', 'https://shop.example.com')
+    expect(
+      screen.getByRole('button', { name: /open in new tab/i })
+    ).toHaveAttribute('href', 'https://shop.example.com')
+  })
+
+  it('does not restore the legacy shop when card store payment is disabled', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          ...topupInfo,
+          card_store: {
+            enabled: false,
+            store_url: 'https://shop.example.com',
+            amount_options: [],
+          },
+        },
+      },
+    })
+    renderPage()
+    expect(
+      await screen.findByText(
+        'The redemption code purchase page is not configured yet.'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByTitle('Redemption code purchase page')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /open in new tab/i })
+    ).not.toBeInTheDocument()
+  })
+
+  it.each([
+    '',
+    '   ',
+    'javascript:alert(1)',
+    'not-a-url',
+    'https:shop.example.com',
+    'https://user:password@shop.example.com',
+  ])(
     'shows the unconfigured state for an unusable purchase URL "%s"',
     async (topupLink) => {
       vi.mocked(api.get).mockResolvedValue({

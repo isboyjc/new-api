@@ -184,8 +184,15 @@ export function useTopupInfo() {
         return
       }
 
+      let topupLink = response.data.topup_link
+      if (response.data.card_store) {
+        topupLink = response.data.card_store.enabled
+          ? response.data.card_store.store_url
+          : ''
+      }
       const processedData: TopupInfo = {
         ...response.data,
+        topup_link: topupLink,
         pay_methods: parsePaymentMethods(
           response.data.pay_methods,
           response.data.stripe_min_topup

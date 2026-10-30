@@ -218,6 +218,18 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	case operation_setting.CardStoreOptionKey:
+		cardStore, parseErr := operation_setting.ParseCardStoreConfig(option.Value.(string))
+		if parseErr != nil {
+			common.ApiErrorT(c, parseErr.Error())
+			return
+		}
+		encoded, marshalErr := common.Marshal(cardStore)
+		if marshalErr != nil {
+			common.ApiError(c, marshalErr)
+			return
+		}
+		option.Value = string(encoded)
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "GitHub OAuth"})

@@ -17,13 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Link } from '@tanstack/react-router'
 import i18next from 'i18next'
+import { ArrowRight } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -55,7 +58,6 @@ const quotaSchema = z.object({
   QuotaForNewUser: z.coerce.number().min(0),
   QuotaForInviter: z.coerce.number().min(0),
   QuotaForInvitee: z.coerce.number().min(0),
-  TopUpLink: z.string(),
   quota_setting: z.object({
     enable_free_model_pre_consume: z.boolean(),
     trust_quota_usd: z.preprocess(
@@ -305,25 +307,34 @@ export function QuotaSettingsSection({
               />
             </SettingsFormGridItem>
 
-            <FormField
-              control={form.control}
-              name='TopUpLink'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Top-Up Link')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('https://example.com/topup')}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('External link for users to purchase quota')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <SettingsFormGridItem
+              span='full'
+              className='flex flex-wrap items-center justify-between gap-3'
+            >
+              <div className='min-w-0 space-y-1'>
+                <p className='text-sm font-medium'>{t('Top-Up Link')}</p>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Manage the external purchase link and quick amounts in Card Store Payment.'
+                  )}
+                </p>
+              </div>
+              <Button
+                type='button'
+                variant='outline'
+                className='h-auto min-h-9 max-w-full py-2 whitespace-normal'
+                render={
+                  <Link
+                    to='/system-settings/billing/$section'
+                    params={{ section: 'payment' }}
+                    hash='card-store'
+                  />
+                }
+              >
+                {t('Card Store Payment')}
+                <ArrowRight data-icon='inline-end' />
+              </Button>
+            </SettingsFormGridItem>
           </SettingsFormGrid>
         </SettingsForm>
       </Form>

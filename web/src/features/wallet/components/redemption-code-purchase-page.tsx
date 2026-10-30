@@ -26,15 +26,15 @@ import { SectionPageLayout } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { isHttpUrl } from '@/lib/content-format'
 
 import { useTopupInfo } from '../hooks'
+import { isCardStoreUrl } from '../lib/card-store'
 
 export function RedemptionCodePurchasePage() {
   const { t } = useTranslation()
   const { topupInfo, loading, error, refetch } = useTopupInfo()
   const configuredLink = topupInfo?.topup_link?.trim() || ''
-  const topupLink = isHttpUrl(configuredLink) ? configuredLink : ''
+  const topupLink = isCardStoreUrl(configuredLink) ? configuredLink : ''
   const redemptionEnabled = topupInfo?.enable_redemption !== false
   let iframeSandbox =
     'allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts allow-top-navigation-by-user-activation'

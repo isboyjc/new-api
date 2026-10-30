@@ -20,7 +20,6 @@ import i18next from 'i18next'
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
-import { getSelf } from '@/lib/api'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -50,7 +49,6 @@ export function useRedemption() {
             quota: formatQuota(quotaAdded),
           })
         )
-        await getSelf()
         return true
       }
 

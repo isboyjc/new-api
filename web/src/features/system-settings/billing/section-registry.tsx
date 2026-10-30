@@ -63,7 +63,6 @@ const BILLING_SECTIONS = [
           QuotaForNewUser: settings.QuotaForNewUser,
           QuotaForInviter: settings.QuotaForInviter,
           QuotaForInvitee: settings.QuotaForInvitee,
-          TopUpLink: settings.TopUpLink,
           quota_setting: {
             trust_quota_usd: settings['quota_setting.trust_quota_usd'],
             pre_consume_multiplier:
@@ -185,6 +184,8 @@ const BILLING_SECTIONS = [
           confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
           confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
         }}
+        cardStoreConfig={settings['card_store_setting.config']}
+        cardStoreLegacyUrl={settings.TopUpLink}
       />
     ),
   },

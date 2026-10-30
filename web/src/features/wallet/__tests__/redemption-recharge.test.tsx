@@ -263,7 +263,12 @@ it('shows only code recharge when online payments are disabled without an online
   expect(screen.getByLabelText('Redemption Code')).toBeVisible()
 })
 
-it.each(['', 'javascript:alert(1)'])(
+it.each([
+  '',
+  'javascript:alert(1)',
+  'https:shop.example.com',
+  'https://user:password@shop.example.com',
+])(
   'keeps redemption available without a purchase action when the shop URL is "%s"',
   async (topupLink) => {
     topupOverrides = { topup_link: topupLink }
@@ -353,6 +358,34 @@ it('disables redemption while the request is pending and clears the code after s
   })
   expect(input).toBeEnabled()
   expect(input).toHaveValue('')
+  expect(
+    vi.mocked(api.get).mock.calls.filter(([url]) => url === '/api/user/self')
+  ).toHaveLength(2)
+})
+
+it('keeps a successful redemption successful when the balance refresh fails', async () => {
+  await renderWallet()
+  await userEvent.type(
+    screen.getByLabelText('Redemption Code'),
+    'CREDITED-CODE'
+  )
+  vi.mocked(api.get).mockRejectedValueOnce(
+    new Error('Balance refresh unavailable')
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Redeem' }))
+  expect(
+    await screen.findByText(
+      'Redemption complete. Funds have been added to your balance.'
+    )
+  ).toBeVisible()
+  expect(screen.getByLabelText('Redemption Code')).toHaveValue('')
+  expect(screen.getByLabelText('Redemption Code')).not.toHaveAttribute(
+    'aria-invalid',
+    'true'
+  )
+  expect(
+    vi.mocked(api.post).mock.calls.filter(([url]) => url === '/api/user/topup')
+  ).toHaveLength(1)
 })
 
 it('shows purchase and business guidance above Add Funds with the QQ contact in announcements and translates it when language changes', async () => {
@@ -397,4 +430,109 @@ it('opens order history from the wallet header', async () => {
   await renderWallet()
   await userEvent.click(screen.getByRole('button', { name: 'Order History' }))
   expect(await screen.findByRole('dialog')).toHaveTextContent('Billing History')
+})
+
+it('opens each configured quick amount in a new tab and preserves the entered code without creating a payment', async () => {
+  topupOverrides = {
+    card_store: {
+      enabled: true,
+      store_url: 'https://shop.example.com',
+      amount_options: [
+        { amount: 10, url: 'https://shop.example.com/ten' },
+        { amount: 50, url: 'https://shop.example.com/fifty' },
+      ],
+    },
+  }
+  await renderWallet()
+  const input = screen.getByLabelText('Redemption Code')
+  await userEvent.type(input, 'KEEP-MY-CODE')
+  const amount = screen.getByRole('button', { name: 'Purchase $10 code' })
+  expect(amount).toHaveAttribute('href', 'https://shop.example.com/ten')
+  expect(amount).toHaveAttribute('target', '_blank')
+  expect(amount).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(
+    screen.getByRole('button', { name: 'Purchase $50 code' })
+  ).toHaveAttribute('href', 'https://shop.example.com/fifty')
+  await userEvent.click(amount)
+  expect(input).toHaveValue('KEEP-MY-CODE')
+  expect(api.post).not.toHaveBeenCalled()
+  const quickAmounts = screen.getByRole('region', {
+    name: 'Quick Recharge Amounts',
+  })
+  const redemption = screen.getByRole('region', { name: 'Redeem to Balance' })
+  expect(
+    quickAmounts.compareDocumentPosition(redemption) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(
+    screen.getByRole('button', { name: 'Purchase Redemption Codes' })
+  ).toHaveAttribute('href', 'https://shop.example.com')
+})
+
+it('disabling card store hides all purchase actions but keeps code redemption available', async () => {
+  topupOverrides = {
+    card_store: {
+      enabled: false,
+      store_url: 'https://shop.example.com',
+      amount_options: [{ amount: 10, url: 'https://shop.example.com/ten' }],
+    },
+  }
+  await renderWallet()
+  expect(
+    screen.queryByRole('button', { name: /Purchase/ })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Open shop within site' })
+  ).not.toBeInTheDocument()
+  await userEvent.type(
+    screen.getByLabelText('Redemption Code'),
+    'MY-CODE{Enter}'
+  )
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith('/api/user/topup', { key: 'MY-CODE' })
+  )
+})
+
+it('uses the main card store URL for blank product links while retaining custom links', async () => {
+  topupOverrides = {
+    card_store: {
+      enabled: true,
+      store_url: 'https://catfk.com/shop/PKJYNA3K',
+      amount_options: [
+        { amount: 5, url: '   ' },
+        { amount: 50, url: 'https://shop.example.com/fifty' },
+      ],
+    },
+  }
+  await renderWallet()
+  expect(
+    screen.getByRole('button', { name: 'Purchase $5 code' })
+  ).toHaveAttribute('href', 'https://catfk.com/shop/PKJYNA3K')
+  expect(
+    screen.getByRole('button', { name: 'Purchase $50 code' })
+  ).toHaveAttribute('href', 'https://shop.example.com/fifty')
+  expect(
+    screen.getByRole('button', { name: 'Purchase Redemption Codes' })
+  ).toHaveAttribute('href', 'https://catfk.com/shop/PKJYNA3K')
+})
+
+it('filters unsafe quick links and invalid amounts while retaining the main shop and redemption', async () => {
+  topupOverrides = {
+    card_store: {
+      enabled: true,
+      store_url: 'https://shop.example.com',
+      amount_options: [
+        { amount: 10, url: 'javascript:alert(1)' },
+        { amount: -50, url: 'https://shop.example.com/invalid' },
+      ],
+    },
+  }
+  await renderWallet()
+  expect(
+    screen.queryByRole('button', { name: 'Purchase $10 code' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Purchase Redemption Codes' })
+  ).toHaveAttribute('href', 'https://shop.example.com')
+  expect(screen.getByLabelText('Redemption Code')).toBeVisible()
 })

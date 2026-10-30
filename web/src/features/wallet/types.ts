@@ -116,6 +116,13 @@ export interface WaffoPayMethod {
   payMethodName?: string
 }
 
+export interface CardStoreConfig {
+  enabled: boolean
+  store_url: string
+  /** Redemption code face values in system USD; display only. */
+  amount_options: { amount: number; url: string }[]
+}
+
 /**
  * Topup configuration information
  */
@@ -136,6 +143,7 @@ export interface TopupInfo {
   discount: Record<number, number>
   /** Optional topup link for purchasing codes */
   topup_link?: string
+  card_store?: CardStoreConfig
   /** Whether Creem topup is enabled */
   enable_creem_topup?: boolean
   /** Available Creem products */

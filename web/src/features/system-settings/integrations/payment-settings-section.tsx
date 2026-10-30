@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Code2, Eye, ShieldAlert } from 'lucide-react'
 import * as React from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
@@ -51,6 +52,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
 import { confirmPaymentCompliance } from '../api'
+import { CardStoreSettingsSection } from '../billing/card-store-settings-section'
 import {
   SettingsForm,
   SettingsSwitchContent,
@@ -204,6 +206,8 @@ type PaymentSettingsSectionProps = {
   waffoPancakeProvisionedStoreID?: string
   waffoPancakeProvisionedProductID?: string
   complianceDefaults: PaymentComplianceDefaults
+  cardStoreConfig: string
+  cardStoreLegacyUrl: string
 }
 
 function parseWaffoPayMethods(value: string): PayMethod[] {
@@ -222,10 +226,31 @@ export function PaymentSettingsSection({
   waffoPancakeProvisionedStoreID,
   waffoPancakeProvisionedProductID,
   complianceDefaults,
+  cardStoreConfig,
+  cardStoreLegacyUrl,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
+  const tabsListRef = React.useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
+  const hash = useLocation({ select: (location) => location.hash })
+  const activeTab = [
+    'general',
+    'epay',
+    'stripe',
+    'creem',
+    'waffo-pancake',
+    'waffo',
+    'card-store',
+  ].includes(hash)
+    ? hash
+    : 'general'
+  React.useEffect(() => {
+    tabsListRef.current
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTab, t])
   const initialFormValues = React.useMemo<PaymentFormValues>(
     () => ({
       ...defaultValues,
@@ -419,6 +444,8 @@ export function PaymentSettingsSection({
   }, [defaultsSignature, form])
 
   const onSubmit = async (values: PaymentFormValues) => {
+    if (!complianceConfirmed) return
+
     const sanitized = {
       PayAddress: removeTrailingSlash(values.PayAddress),
       EpayId: values.EpayId.trim(),
@@ -866,32 +893,49 @@ export function PaymentSettingsSection({
         onConfirm={() => confirmComplianceMutation.mutate()}
       />
 
-      <Form {...form}>
-        <SettingsForm
-          onSubmit={form.handleSubmit(onSubmit)}
-          className={cn(
-            'gap-y-8',
-            !complianceConfirmed && 'pointer-events-none opacity-40'
-          )}
-          data-no-autosubmit='true'
-        >
-          <SettingsPageFormActions
-            onSave={form.handleSubmit(onSubmit)}
-            isSaving={updateOption.isPending || isSubmitting}
-            saveLabel='Save all settings'
-          />
-          <Tabs defaultValue='general' className='min-w-0'>
-            <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[44rem] grid-cols-6'>
-                <TabsTrigger value='general'>{t('General')}</TabsTrigger>
-                <TabsTrigger value='epay'>Epay</TabsTrigger>
-                <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
-                <TabsTrigger value='creem'>Creem</TabsTrigger>
-                <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
-                <TabsTrigger value='waffo'>Waffo</TabsTrigger>
-              </TabsList>
-            </div>
+      <Tabs
+        inert={!complianceConfirmed}
+        value={activeTab}
+        onValueChange={(value) => {
+          void navigate({ hash: String(value), replace: true })
+        }}
+        className={cn(
+          'min-w-0',
+          !complianceConfirmed && 'pointer-events-none opacity-40'
+        )}
+      >
+        <div className='min-w-0 overflow-x-auto pb-1'>
+          <TabsList
+            ref={tabsListRef}
+            className='grid w-max min-w-[52rem] grid-cols-[repeat(6,minmax(7rem,1fr))_auto]'
+          >
+            <TabsTrigger value='general'>{t('General')}</TabsTrigger>
+            <TabsTrigger value='epay'>Epay</TabsTrigger>
+            <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
+            <TabsTrigger value='creem'>Creem</TabsTrigger>
+            <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
+            <TabsTrigger value='waffo'>Waffo</TabsTrigger>
+            <TabsTrigger value='card-store'>
+              {t('Card Store Payment')}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
+        <Form {...form}>
+          <SettingsForm
+            onSubmit={form.handleSubmit(onSubmit)}
+            className='gap-y-8'
+            hidden={activeTab === 'card-store'}
+            data-no-autosubmit='true'
+          >
+            {activeTab !== 'card-store' && (
+              <SettingsPageFormActions
+                onSave={form.handleSubmit(onSubmit)}
+                isSaving={updateOption.isPending || isSubmitting}
+                isSaveDisabled={!complianceConfirmed}
+                saveLabel='Save all settings'
+              />
+            )}
             <TabsContent value='general' className={paymentTabContentClassName}>
               <div className='space-y-4'>
                 <div>
@@ -1631,9 +1675,21 @@ export function PaymentSettingsSection({
                 onPayMethodsChange={setWaffoPayMethods}
               />
             </TabsContent>
-          </Tabs>
-        </SettingsForm>
-      </Form>
+          </SettingsForm>
+        </Form>
+        <TabsContent
+          value='card-store'
+          keepMounted
+          className={paymentTabContentClassName}
+        >
+          <CardStoreSettingsSection
+            config={cardStoreConfig}
+            legacyUrl={cardStoreLegacyUrl}
+            active={activeTab === 'card-store'}
+            disabled={!complianceConfirmed}
+          />
+        </TabsContent>
+      </Tabs>
     </SettingsSection>
   )
 }

@@ -271,6 +271,7 @@ export type ModelSettings = {
 }
 
 export type BillingSettings = {
+  'card_store_setting.config': string
   QuotaForNewUser: number
   QuotaForInviter: number
   QuotaForInvitee: number
